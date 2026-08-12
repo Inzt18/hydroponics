@@ -23,3 +23,5 @@ Thumbs.db
 # Secrets / local MAC overrides (optional personal copies)
 firmware/**/config.local.h
 .env
+.env.*
+!.env.example

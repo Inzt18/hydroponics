@@ -1,14 +1,19 @@
 /*
  * Solar ESP32 Smart Fertigation — Controller Node
- * Board: ESP32 DevKit (or similar)
  *
- * Receives 40x40 RGB thumbnails over ESP-NOW from ESP32-CAM,
- * detects likely nutrient deficiency, and runs the fertigation pump.
+ * Modes:
+ *  1) ESP-NOW from ESP32-CAM + local color detect (optional)
+ *  2) Wi-Fi HTTP API for Plant.id bridge:
+ *       GET  /health
+ *       POST /dose   {"dose_ms":5000,"issue":"...","severity_pct":80}
  */
 
 #include <WiFi.h>
+#include <WebServer.h>
 #include <esp_now.h>
+#include <esp_wifi.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "config.h"
 #include "nutrient_detector.h"
@@ -23,6 +28,7 @@ static bool g_receiving = false;
 static uint32_t g_recv_started_ms = 0;
 
 static PumpControl g_pump;
+static WebServer g_server(80);
 
 static bool macAllowed(const uint8_t* mac) {
   bool wildcard = true;
@@ -61,6 +67,12 @@ static void sendResult(const uint8_t* dest_mac, uint16_t frame_id,
 }
 
 static void processImage(const uint8_t* mac) {
+  if (!ENABLE_LOCAL_DETECT) {
+    Serial.println("[CTL] local detect disabled — ignoring ESP-NOW frame");
+    resetReceive();
+    return;
+  }
+
   DetectionResult det = detectNutrientDeficiency(
       g_image, THUMB_W, THUMB_H, DOSE_MS_BASE, DOSE_MS_MAX, DOSE_SEVERITY_MIN);
 
@@ -142,6 +154,109 @@ static void printMac() {
   Serial.println("[CTL] Paste this MAC into esp32_cam/config.h as CONTROLLER_MAC");
 }
 
+static uint16_t parseDoseMsFromBody(const String& body) {
+  // Minimal JSON parse for {"dose_ms":1234,...}
+  int idx = body.indexOf("dose_ms");
+  if (idx < 0) return 0;
+  int colon = body.indexOf(':', idx);
+  if (colon < 0) return 0;
+  long v = body.substring(colon + 1).toInt();
+  if (v < 0) v = 0;
+  if (v > DOSE_MS_MAX) v = DOSE_MS_MAX;
+  return (uint16_t)v;
+}
+
+static void handleHealth() {
+  String ip = WiFi.localIP().toString();
+  String json = "{";
+  json += "\"ok\":true,";
+  json += "\"service\":\"fertigation-controller\",";
+  json += "\"ip\":\"" + ip + "\",";
+  json += "\"pump_running\":";
+  json += g_pump.isRunning() ? "true" : "false";
+  json += ",\"wifi_api\":true";
+  json += ",\"local_detect\":";
+  json += ENABLE_LOCAL_DETECT ? "true" : "false";
+  json += "}";
+  g_server.send(200, "application/json", json);
+}
+
+static void handleDose() {
+  if (g_server.method() != HTTP_POST) {
+    g_server.send(405, "application/json", "{\"ok\":false,\"error\":\"POST only\"}");
+    return;
+  }
+
+  String body = g_server.arg("plain");
+  if (body.length() == 0) body = g_server.arg(0);
+  uint16_t dose_ms = parseDoseMsFromBody(body);
+
+  Serial.println("[API] POST /dose");
+  Serial.println(body);
+  Serial.printf("[API] parsed dose_ms=%u\n", dose_ms);
+
+  if (dose_ms == 0) {
+    g_server.send(200, "application/json",
+                  "{\"ok\":true,\"pumped\":false,\"reason\":\"dose_ms=0\"}");
+    return;
+  }
+
+  if (!g_pump.canRun()) {
+    g_server.send(200, "application/json",
+                  "{\"ok\":true,\"pumped\":false,\"reason\":\"cooldown\"}");
+    return;
+  }
+
+  g_pump.runDose(dose_ms);
+  digitalWrite(STATUS_LED_PIN, HIGH);
+  delay(60);
+  digitalWrite(STATUS_LED_PIN, LOW);
+
+  String json = "{\"ok\":true,\"pumped\":true,\"dose_ms\":";
+  json += String(dose_ms);
+  json += "}";
+  g_server.send(200, "application/json", json);
+}
+
+static void handleNotFound() {
+  g_server.send(404, "application/json", "{\"ok\":false,\"error\":\"not found\"}");
+}
+
+static bool connectWifi() {
+  if (!ENABLE_WIFI_API) return false;
+  if (String(WIFI_SSID) == "YOUR_WIFI_SSID") {
+    Serial.println("[WIFI] Set WIFI_SSID/WIFI_PASSWORD in config.h");
+    return false;
+  }
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.printf("[WIFI] connecting to %s", WIFI_SSID);
+  uint32_t start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
+    delay(400);
+    Serial.print(".");
+  }
+  Serial.println();
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[WIFI] connect failed — HTTP API disabled");
+    return false;
+  }
+  Serial.print("[WIFI] connected IP=");
+  Serial.println(WiFi.localIP());
+  return true;
+}
+
+static void startHttpApi() {
+  g_server.on("/health", HTTP_GET, handleHealth);
+  g_server.on("/dose", HTTP_POST, handleDose);
+  g_server.onNotFound(handleNotFound);
+  g_server.begin();
+  Serial.println("[API] HTTP server on :80");
+  Serial.println("[API] GET  /health");
+  Serial.println("[API] POST /dose  {\"dose_ms\":5000}");
+}
+
 void setup() {
   Serial.begin(SERIAL_BAUD);
   delay(400);
@@ -151,10 +266,18 @@ void setup() {
   digitalWrite(STATUS_LED_PIN, LOW);
   g_pump.begin(PUMP_RELAY_PIN, PUMP_COOLDOWN_MS);
 
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
-  delay(100);
+  bool wifi_ok = connectWifi();
+  if (!wifi_ok) {
+    // ESP-NOW still needs STA mode
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect(false, false);
+    delay(100);
+  }
   printMac();
+
+  if (wifi_ok) {
+    startHttpApi();
+  }
 
   if (esp_now_init() != ESP_OK) {
     Serial.println("[CTL] esp_now_init failed");
@@ -162,20 +285,25 @@ void setup() {
   }
   esp_now_register_recv_cb(onDataRecv);
 
-  // Add a broadcast peer so RESULT packets can be sent back if needed.
   esp_now_peer_info_t peer = {};
   memset(peer.peer_addr, 0xFF, 6);
   peer.channel = 0;
   peer.encrypt = false;
+  // Keep ESP-NOW on same channel as Wi-Fi soft association when possible
+  if (wifi_ok) {
+    peer.channel = WiFi.channel();
+  }
   esp_now_add_peer(&peer);
 
-  Serial.println("[CTL] waiting for camera frames...");
+  Serial.println("[CTL] ready (ESP-NOW + optional Plant.id HTTP)");
 }
 
 void loop() {
   g_pump.update();
+  if (ENABLE_WIFI_API && WiFi.status() == WL_CONNECTED) {
+    g_server.handleClient();
+  }
 
-  // Drop incomplete transfers after 5s
   if (g_receiving && (millis() - g_recv_started_ms > 5000)) {
     Serial.println("[CTL] receive timeout — reset");
     resetReceive();

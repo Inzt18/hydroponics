@@ -122,6 +122,9 @@ Buttons act as the camera leaf result; OLED + green LED show detect → pump.
 ## Docs
 
 - [**Build instructions (start here)**](docs/BUILD_INSTRUCTIONS.md)
+- [Assembly guide](docs/ASSEMBLY_GUIDE.md)
+- [**Upload from VS Code (PlatformIO)**](docs/VSCODE_PLATFORMIO.md)
+- [**Plant.id API integration**](docs/PLANTID_INTEGRATION.md)
 - [Architecture](docs/architecture.md)  
 - [Wiring](docs/wiring.md)  
 - [Solar power](docs/solar-power.md)

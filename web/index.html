@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Plant Health Monitor</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>🌱 Plant Health Monitor</h1>
+    <div class="device-select">
+      <label for="deviceSelect">Device:</label>
+      <select id="deviceSelect"></select>
+      <span id="statusDot" class="status-dot offline" title="Connection status"></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="card image-card">
+      <h2>Latest Photo</h2>
+      <img id="latestImage" src="" alt="No image yet" />
+      <p class="timestamp" id="imageTime">No image received yet</p>
+    </section>
+
+    <section class="card stats-card">
+      <h2>Soil Moisture</h2>
+      <div class="gauge">
+        <div class="gauge-value" id="moistureValue">--%</div>
+      </div>
+      <p class="timestamp" id="dataTime">No data received yet</p>
+    </section>
+
+    <section class="card chart-card">
+      <h2>Moisture History</h2>
+      <canvas id="historyChart" height="120"></canvas>
+    </section>
+  </main>
+
+  <footer>
+    <p>Auto-refreshes every 10 seconds &middot; ESP32-CAM Plant Monitor</p>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>

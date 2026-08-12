@@ -22,7 +22,7 @@
 - Fits ESP32 RAM without PSRAM on the controller
 - Chunk size stays under ESP-NOW payload limits
 
-## Detection model (v1 heuristic)
+## Detection model (v1 heuristic + optional Plant.id)
 
 | Cue | Likely class | Pump blend suggestion |
 |-----|--------------|------------------------|
@@ -31,7 +31,16 @@
 | Brown / scorched edge | Potassium | K-forward mix |
 | Strong green dominance | Healthy | No dose |
 
-This is a **prototype classifier** for learning IoT control loops. For production, replace with a trained Edge Impulse / TFLite leaf model and keep the same pump interface.
+This is a **prototype classifier** for learning IoT control loops.
+
+### Optional cloud ML (integrated)
+Use Plant.id health assessment via laptop bridge:
+
+```text
+photo → plantid/bridge.py → Plant.id API → POST ESP32 /dose → pump
+```
+
+See `docs/PLANTID_INTEGRATION.md`.
 
 ## Fertigation actuation
 

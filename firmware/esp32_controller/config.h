@@ -23,3 +23,12 @@ static const uint8_t DOSE_SEVERITY_MIN = 35;
 
 // Serial baud.
 static const uint32_t SERIAL_BAUD = 115200;
+
+// ---- Plant.id / Wi-Fi HTTP bridge ----
+// Set your Wi-Fi so laptop can POST http://<esp-ip>/dose
+static const bool ENABLE_WIFI_API = true;
+static const char* WIFI_SSID = "PLDTHOMEFIBR5ABD";
+static const char* WIFI_PASSWORD = "PLDTWIFI98EMC";
+
+// Keep local ESP-NOW color detector (true) or rely only on Plant.id HTTP (false).
+static const bool ENABLE_LOCAL_DETECT = true;

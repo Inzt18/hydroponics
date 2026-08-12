@@ -2,19 +2,20 @@
  * Solar ESP32 Smart Fertigation — Camera Node
  * Board: AI Thinker ESP32-CAM
  *
- * Captures a frame, builds a 40x40 RGB888 thumbnail, and sends it to the
- * controller over ESP-NOW (chunked). Designed for solar: optional deep sleep.
+ * Modes (config.h):
+ *  - ENABLE_PLANTID_UPLOAD: capture JPEG → HTTP POST to Plant.id bridge
+ *  - ENABLE_ESPNOW_THUMB:   40x40 RGB thumb → ESP-NOW local detector
  */
 
 #include "esp_camera.h"
 #include <WiFi.h>
+#include <HTTPClient.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
 
 #include "config.h"
 #include "protocol.h"
 
-// ---- AI Thinker pin map ----
 #if defined(CAMERA_MODEL_AI_THINKER)
 #define PWDN_GPIO_NUM     32
 #define RESET_GPIO_NUM    -1
@@ -37,7 +38,7 @@
 static uint16_t g_frame_id = 1;
 static uint8_t g_thumb[THUMB_BYTES];
 
-static bool initCamera() {
+static bool initCameraJpeg() {
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -59,10 +60,12 @@ static bool initCamera() {
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size = FRAMESIZE_QVGA;  // 320x240
+  config.frame_size = FRAMESIZE_QVGA;  // 320x240 keeps upload small
   config.jpeg_quality = 12;
-  config.fb_count = 1;
+  config.fb_count = 2;
+#if defined(CAMERA_GRAB_LATEST)
   config.grab_mode = CAMERA_GRAB_LATEST;
+#endif
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
@@ -72,16 +75,76 @@ static bool initCamera() {
   return true;
 }
 
-// Decode JPEG → RGB888 into a temporary buffer is heavy on CAM.
-// Instead: capture JPEG, then sample via a second grab in RGB565 if supported,
-// OR approximate by reconfiguring briefly.
-// Practical path used here: switch to RGB565 QVGA, sample down to 40x40, restore JPEG.
+static bool connectWifi() {
+  if (String(WIFI_SSID) == "YOUR_WIFI_SSID") {
+    Serial.println("[WIFI] Set WIFI_SSID / WIFI_PASSWORD in config.h");
+    return false;
+  }
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.printf("[WIFI] connecting to %s", WIFI_SSID);
+  uint32_t start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 25000) {
+    delay(400);
+    Serial.print(".");
+  }
+  Serial.println();
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[WIFI] failed");
+    return false;
+  }
+  Serial.print("[WIFI] OK IP=");
+  Serial.println(WiFi.localIP());
+  return true;
+}
+
+static bool uploadJpegToPlantIdBridge() {
+  camera_fb_t* fb = esp_camera_fb_get();
+  if (!fb) {
+    Serial.println("[CAM] fb_get failed");
+    return false;
+  }
+  if (fb->format != PIXFORMAT_JPEG) {
+    Serial.println("[CAM] expected JPEG frame");
+    esp_camera_fb_return(fb);
+    return false;
+  }
+
+  Serial.printf("[CAM] JPEG %u bytes → %s\n", fb->len, PLANTID_INGEST_URL);
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[CAM] WiFi not connected");
+    esp_camera_fb_return(fb);
+    return false;
+  }
+
+  HTTPClient http;
+  http.setTimeout(60000);
+  bool ok = false;
+
+  if (http.begin(PLANTID_INGEST_URL)) {
+    http.addHeader("Content-Type", "image/jpeg");
+    http.addHeader("X-Device", "esp32-cam");
+    int code = http.POST(fb->buf, fb->len);
+    String body = http.getString();
+    Serial.printf("[CAM] ingest HTTP %d\n", code);
+    if (body.length() > 0) {
+      Serial.println(body.substring(0, min((int)body.length(), 240)));
+    }
+    ok = (code >= 200 && code < 300);
+    http.end();
+  } else {
+    Serial.println("[CAM] http.begin failed");
+  }
+
+  esp_camera_fb_return(fb);
+  return ok;
+}
 
 static bool captureThumbnail(uint8_t* out_rgb, uint32_t* capture_ms) {
   sensor_t* s = esp_camera_sensor_get();
   if (!s) return false;
 
-  // Prefer RGB565 for deterministic color sampling.
   s->set_pixformat(s, PIXFORMAT_RGB565);
   s->set_framesize(s, FRAMESIZE_QVGA);
 
@@ -102,7 +165,6 @@ static bool captureThumbnail(uint8_t* out_rgb, uint32_t* capture_ms) {
       int sx = (tx * src_w) / THUMB_W;
       int sy = (ty * src_h) / THUMB_H;
       uint16_t p = src[sy * src_w + sx];
-      // RGB565 → RGB888
       uint8_t r = ((p >> 11) & 0x1F) << 3;
       uint8_t g = ((p >> 5) & 0x3F) << 2;
       uint8_t b = (p & 0x1F) << 3;
@@ -114,8 +176,6 @@ static bool captureThumbnail(uint8_t* out_rgb, uint32_t* capture_ms) {
   }
 
   esp_camera_fb_return(fb);
-
-  // Restore JPEG mode for lower power / optional SD logging later.
   s->set_pixformat(s, PIXFORMAT_JPEG);
   s->set_framesize(s, FRAMESIZE_QVGA);
   return true;
@@ -129,10 +189,11 @@ static void onDataSent(const uint8_t* mac, esp_now_send_status_t status) {
 }
 
 static bool initEspNow() {
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
-  delay(100);
-
+  if (WiFi.getMode() == WIFI_OFF) {
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect();
+    delay(100);
+  }
   if (esp_now_init() != ESP_OK) {
     Serial.println("[CAM] esp_now_init failed");
     return false;
@@ -143,10 +204,7 @@ static bool initEspNow() {
   memcpy(peer.peer_addr, CONTROLLER_MAC, 6);
   peer.channel = 0;
   peer.encrypt = false;
-  if (esp_now_add_peer(&peer) != ESP_OK) {
-    Serial.println("[CAM] add_peer failed (set CONTROLLER_MAC in config.h)");
-    // Still allow broadcast-style attempts if MAC is FF:FF:...
-  }
+  esp_now_add_peer(&peer);
   return true;
 }
 
@@ -189,10 +247,10 @@ static bool sendThumbnail(const uint8_t* rgb, uint32_t capture_ms) {
       Serial.printf("[CAM] chunk %u send failed\n", i);
       return false;
     }
-    delay(8);  // pace for receiver
+    delay(8);
   }
 
-  Serial.printf("[CAM] frame %u sent (%u chunks)\n", g_frame_id, total_chunks);
+  Serial.printf("[CAM] ESP-NOW frame %u sent\n", g_frame_id);
   g_frame_id++;
   return true;
 }
@@ -209,32 +267,45 @@ void setup() {
   delay(500);
   Serial.println("\n[CAM] Solar fertigation camera node");
 
-  if (!initCamera()) {
-    Serial.println("[CAM] halt");
+  if (!initCameraJpeg()) {
     while (true) delay(1000);
   }
-  if (!initEspNow()) {
-    Serial.println("[CAM] halt");
-    while (true) delay(1000);
-  }
-  printMac();
 
-  bool broadcast = true;
-  for (int i = 0; i < 6; i++) {
-    if (CONTROLLER_MAC[i] != 0xFF) broadcast = false;
+  if (ENABLE_PLANTID_UPLOAD) {
+    if (!connectWifi()) {
+      Serial.println("[CAM] Plant.id upload mode needs WiFi");
+    }
+  } else if (ENABLE_ESPNOW_THUMB) {
+    if (!initEspNow()) {
+      while (true) delay(1000);
+    }
   }
-  if (broadcast) {
-    Serial.println("[CAM] WARNING: CONTROLLER_MAC is FF:FF:... — set real MAC");
-  }
+
+  printMac();
+  Serial.printf("[CAM] plantid_upload=%d espnow=%d\n",
+                ENABLE_PLANTID_UPLOAD ? 1 : 0,
+                ENABLE_ESPNOW_THUMB ? 1 : 0);
 }
 
 void loop() {
-  uint32_t capture_ms = 0;
-  Serial.println("[CAM] capturing...");
-  if (captureThumbnail(g_thumb, &capture_ms)) {
-    sendThumbnail(g_thumb, capture_ms);
+  if (ENABLE_PLANTID_UPLOAD) {
+    if (WiFi.status() != WL_CONNECTED) {
+      connectWifi();
+    }
+    Serial.println("[CAM] capturing JPEG for Plant.id ...");
+    if (!uploadJpegToPlantIdBridge()) {
+      Serial.println("[CAM] Plant.id upload failed");
+    }
+  } else if (ENABLE_ESPNOW_THUMB) {
+    uint32_t capture_ms = 0;
+    Serial.println("[CAM] capturing thumbnail for ESP-NOW ...");
+    if (captureThumbnail(g_thumb, &capture_ms)) {
+      sendThumbnail(g_thumb, capture_ms);
+    }
   } else {
-    Serial.println("[CAM] capture failed");
+    Serial.println("[CAM] no mode enabled in config.h");
+    delay(5000);
+    return;
   }
 
   if (USE_DEEP_SLEEP) {
