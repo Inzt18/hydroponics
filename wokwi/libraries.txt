@@ -1,0 +1,6 @@
+# Wokwi Library List
+# Auto-installs when the project is opened / built on wokwi.com
+# https://docs.wokwi.com/guides/libraries
+
+Adafruit SSD1306
+Adafruit GFX Library

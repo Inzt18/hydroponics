@@ -1,0 +1,25 @@
+# Solar ESP32 Smart Fertigation — .gitignore
+
+# Python
+simulator/.venv/
+simulator/venv/
+simulator/output/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Build
+.pio/
+*.elf
+*.bin
+*.map
+
+# Secrets / local MAC overrides (optional personal copies)
+firmware/**/config.local.h
+.env

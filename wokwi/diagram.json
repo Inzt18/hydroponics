@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "author": "Solar ESP32 Smart Fertigation",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-devkit-c-v4",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "board-ssd1306",
+      "id": "oled1",
+      "top": -12.86,
+      "left": 240.23,
+      "attrs": { "i2cAddress": "0x3c" }
+    },
+    {
+      "type": "wokwi-relay-module",
+      "id": "relay1",
+      "top": 126.2,
+      "left": 230.4,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_pump",
+      "top": 140.4,
+      "left": 398.4,
+      "attrs": { "color": "green", "label": "PUMP" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 157.55,
+      "left": 345.6,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn_n",
+      "top": 230.6,
+      "left": -96,
+      "attrs": { "color": "yellow", "label": "N def" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn_p",
+      "top": 278.6,
+      "left": -96,
+      "attrs": { "color": "purple", "label": "P def" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn_k",
+      "top": 326.6,
+      "left": -96,
+      "attrs": { "color": "orange", "label": "K def" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn_ok",
+      "top": 374.6,
+      "left": -96,
+      "attrs": { "color": "green", "label": "Healthy" }
+    },
+    {
+      "type": "wokwi-text",
+      "id": "title",
+      "top": -67.2,
+      "left": 28.8,
+      "attrs": {
+        "text": "Solar Fertigation (Wokwi visual demo)\nButtons = leaf image from CAM\nOLED = detection  |  Green LED = pump"
+      }
+    }
+  ],
+  "connections": [
+    ["esp:TX", "$serialMonitor:RX", "", []],
+    ["esp:RX", "$serialMonitor:TX", "", []],
+
+    ["oled1:GND", "esp:GND.1", "black", ["v0"]],
+    ["oled1:VCC", "esp:3V3", "red", ["v0"]],
+    ["oled1:SCL", "esp:22", "green", ["v0"]],
+    ["oled1:SDA", "esp:21", "green", ["v0"]],
+
+    ["relay1:VCC", "esp:5V", "red", ["h0"]],
+    ["relay1:GND", "esp:GND.2", "black", ["h0"]],
+    ["relay1:IN", "esp:26", "green", ["h0"]],
+
+    ["esp:5V", "r1:1", "red", ["h20", "v120"]],
+    ["r1:2", "led_pump:A", "green", []],
+    ["led_pump:C", "relay1:COM", "green", []],
+    ["relay1:NO", "esp:GND.3", "black", ["v20", "h-40"]],
+
+    ["btn_n:1.r", "esp:32", "yellow", ["h20"]],
+    ["btn_n:2.l", "esp:GND.1", "black", ["h-20", "v-40"]],
+    ["btn_p:1.r", "esp:33", "violet", ["h20"]],
+    ["btn_p:2.l", "esp:GND.1", "black", ["h-20", "v-80"]],
+    ["btn_k:1.r", "esp:25", "orange", ["h20"]],
+    ["btn_k:2.l", "esp:GND.1", "black", ["h-20", "v-120"]],
+    ["btn_ok:1.r", "esp:27", "green", ["h20"]],
+    ["btn_ok:2.l", "esp:GND.1", "black", ["h-20", "v-160"]]
+  ],
+  "dependencies": {}
+}
