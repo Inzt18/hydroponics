@@ -42,23 +42,30 @@ insert into storage.buckets (id, name, public)
 values ('cam-uploads', 'cam-uploads', true)
 on conflict (id) do update set public = true;
 
-drop policy if exists "Public read plant photos" on storage.objects;
-create policy "Public read plant photos"
-  on storage.objects
-  for select
-  to public
-  using (bucket_id in ('plant-photos', 'cam-uploads'));
-
+-- Storage uploads run INSERT … RETURNING *, so SELECT is required
+-- or the insert is rolled back with 403 RLS. Scope SELECT to these
+-- two buckets only — do not allow listing every bucket.
 drop policy if exists "Service role write cam uploads" on storage.objects;
-create policy "Service role write cam uploads"
+drop policy if exists "Service role update cam uploads" on storage.objects;
+drop policy if exists "Upload plant photos" on storage.objects;
+drop policy if exists "Update plant photos" on storage.objects;
+drop policy if exists "allow select plant and cam" on storage.objects;
+
+create policy "Upload plant photos"
   on storage.objects
   for insert
-  to service_role
+  to anon, authenticated, service_role
   with check (bucket_id in ('plant-photos', 'cam-uploads'));
 
-drop policy if exists "Service role update cam uploads" on storage.objects;
-create policy "Service role update cam uploads"
+create policy "Update plant photos"
   on storage.objects
   for update
-  to service_role
+  to anon, authenticated, service_role
+  using (bucket_id in ('plant-photos', 'cam-uploads'))
+  with check (bucket_id in ('plant-photos', 'cam-uploads'));
+
+create policy "allow select plant and cam"
+  on storage.objects
+  for select
+  to anon, authenticated, service_role, public
   using (bucket_id in ('plant-photos', 'cam-uploads'));

@@ -250,6 +250,8 @@ def health():
             "esp_url": os.getenv("ESP32_CONTROLLER_URL", ""),
             "cam_still_url": CAM_STILL_URL,
             "supabase": supabase_storage.is_configured(),
+            "supabase_key": supabase_storage.key_kind() if supabase_storage.is_configured() else "missing",
+            "supabase_bucket": supabase_storage.bucket_name() if supabase_storage.is_configured() else "",
             "dashboard": "/",
         }
     )
@@ -290,21 +292,27 @@ def _upload_to_supabase(
         return None
     try:
         public_url = supabase_storage.upload_photo(image_path.name, image_bytes)
-        supabase_storage.upsert_capture(
-            image_path.name,
-            public_url,
-            device=device,
-            bytes_len=len(image_bytes),
-            decision=decision,
-            pumped=pumped,
-            plant_id_access_token=plant_id_access_token,
-        )
+        try:
+            supabase_storage.upsert_capture(
+                image_path.name,
+                public_url,
+                device=device,
+                bytes_len=len(image_bytes),
+                decision=decision,
+                pumped=pumped,
+                plant_id_access_token=plant_id_access_token,
+            )
+        except Exception as exc:
+            print(f"[SUPABASE] row upsert failed for {image_path.name}: {exc}")
         print(f"[SUPABASE] stored {image_path.name}")
         return public_url
     except supabase_storage.SupabaseNotConfigured as exc:
         print(f"[SUPABASE] not configured, skipping upload: {exc}")
     except Exception as exc:
-        print(f"[SUPABASE] upload failed for {image_path.name}: {exc}")
+        print(
+            f"[SUPABASE] upload failed for {image_path.name} "
+            f"key={supabase_storage.key_kind()} bucket={supabase_storage.bucket_name()}: {exc}"
+        )
     return None
 
 

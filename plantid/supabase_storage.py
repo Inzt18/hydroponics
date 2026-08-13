@@ -13,13 +13,56 @@ Env vars (see .env):
 
 from __future__ import annotations
 
+import base64
+import json
 import os
+import urllib.error
+import urllib.request
 from typing import Any
+from urllib.parse import quote
 
 from supabase import Client, create_client
 
 _client: Client | None = None
 _warned = False
+
+
+def _jwt_claim(token: str, claim: str) -> str | None:
+    if not token.startswith("eyJ"):
+        return None
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        data = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+        value = data.get(claim)
+        return str(value) if value is not None else None
+    except Exception:
+        return None
+
+
+def key_kind() -> str:
+    """Safe label for logs/health. Never returns the secret itself."""
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if key.startswith(("sb_publishable_", "sb_anon_")):
+        return "publishable"
+    if key.startswith("sb_secret_"):
+        return "secret"
+    if key.startswith("eyJ"):
+        return _jwt_claim(key, "role") or "jwt"
+    return "unrecognized"
+
+
+def _key_info() -> str:
+    kind = key_kind()
+    if kind == "publishable":
+        return "publishable/anon — Storage RLS applies"
+    if kind == "secret":
+        return "secret"
+    if kind in ("service_role", "anon", "authenticated"):
+        return f"jwt role={kind}"
+    if kind == "jwt":
+        return "jwt role=unknown"
+    return kind
 
 
 class SupabaseNotConfigured(RuntimeError):
@@ -50,7 +93,7 @@ def get_client() -> Client:
             os.getenv("SUPABASE_URL", "").strip(),
             os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip(),
         )
-        print("[SUPABASE] connected")
+        print(f"[SUPABASE] connected ({_key_info()}) bucket={bucket_name()}")
     return _client
 
 
@@ -63,19 +106,33 @@ def table_name() -> str:
 
 
 def upload_photo(filename: str, image_bytes: bytes) -> str:
-    """Upload JPEG bytes. Returns the public URL."""
-    client = get_client()
+    """Upload JPEG bytes via Storage REST. Returns the public URL."""
+    url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if not url or not key:
+        raise SupabaseNotConfigured(
+            "SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set in environment/.env"
+        )
     bucket = bucket_name()
-    try:
-        client.storage.get_bucket(bucket)
-    except Exception:
-        client.storage.create_bucket(bucket, options={"public": True})
-    client.storage.from_(bucket).upload(
-        path=filename,
-        file=image_bytes,
-        file_options={"content-type": "image/jpeg", "upsert": "true"},
+    object_url = f"{url}/storage/v1/object/{quote(bucket, safe='')}/{quote(filename, safe='')}"
+    request = urllib.request.Request(
+        object_url,
+        data=image_bytes,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "apikey": key,
+            "Content-Type": "image/jpeg",
+            "x-upsert": "true",
+        },
     )
-    return client.storage.from_(bucket).get_public_url(filename)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            response.read()
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"storage HTTP {exc.code}: {body}") from exc
+    return f"{url}/storage/v1/object/public/{bucket}/{filename}"
 
 
 def _row_from_decision(
@@ -155,13 +212,20 @@ def insert_photo_record(
 
 def fetch_latest(limit: int = 40) -> list[dict[str, Any]]:
     client = get_client()
-    result = (
-        client.table(table_name())
-        .select("*")
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
+    name = table_name()
+    for column in ("created_at", "captured_at", "id"):
+        try:
+            result = (
+                client.table(name)
+                .select("*")
+                .order(column, desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return result.data or []
+        except Exception:
+            continue
+    result = client.table(name).select("*").limit(limit).execute()
     return result.data or []
 
 
