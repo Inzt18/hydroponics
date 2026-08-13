@@ -26,7 +26,7 @@ static const char* WIFI_PASSWORD = "PLDTWIFI98EMC";
 
 // Laptop running: python -m plantid.server
 // Example: "http://192.168.1.20:8080/ingest"
-const char* serverUrl = "https://hydroponics.onrender.com/ingest";
+#define PLANTID_INGEST_URL "https://hydroponics-gmmj.onrender.com/ingest"
 
 // Camera model: AI Thinker ESP32-CAM
 #define CAMERA_MODEL_AI_THINKER
