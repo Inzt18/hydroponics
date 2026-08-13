@@ -50,8 +50,8 @@ def main() -> int:
 
     client = create_client(url, key)
     try:
-        client.storage.create_bucket("cam-uploads", options={"public": True})
-        print("bucket cam-uploads: created")
+        client.storage.create_bucket("plant-photos", options={"public": True})
+        print("bucket plant-photos: created")
     except Exception as exc:
         print(f"bucket create: {type(exc).__name__}: {exc}")
 

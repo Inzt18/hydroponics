@@ -35,19 +35,30 @@ create policy "Public read captures"
   using (true);
 
 insert into storage.buckets (id, name, public)
+values ('plant-photos', 'plant-photos', true)
+on conflict (id) do update set public = true;
+
+insert into storage.buckets (id, name, public)
 values ('cam-uploads', 'cam-uploads', true)
 on conflict (id) do update set public = true;
+
+drop policy if exists "Public read plant photos" on storage.objects;
+create policy "Public read plant photos"
+  on storage.objects
+  for select
+  to public
+  using (bucket_id in ('plant-photos', 'cam-uploads'));
 
 drop policy if exists "Service role write cam uploads" on storage.objects;
 create policy "Service role write cam uploads"
   on storage.objects
   for insert
   to service_role
-  with check (bucket_id = 'cam-uploads');
+  with check (bucket_id in ('plant-photos', 'cam-uploads'));
 
 drop policy if exists "Service role update cam uploads" on storage.objects;
 create policy "Service role update cam uploads"
   on storage.objects
   for update
   to service_role
-  using (bucket_id = 'cam-uploads');
+  using (bucket_id in ('plant-photos', 'cam-uploads'));

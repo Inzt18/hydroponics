@@ -7,7 +7,7 @@ a selected photo and this helper updates the same row.
 Env vars (see .env):
   SUPABASE_URL
   SUPABASE_SERVICE_ROLE_KEY
-  SUPABASE_BUCKET   (default: cam-uploads)
+  SUPABASE_BUCKET   (default: plant-photos)
   SUPABASE_TABLE    (default: captures)
 """
 
@@ -55,7 +55,7 @@ def get_client() -> Client:
 
 
 def bucket_name() -> str:
-    return os.getenv("SUPABASE_BUCKET", "cam-uploads").strip() or "cam-uploads"
+    return os.getenv("SUPABASE_BUCKET", "plant-photos").strip() or "plant-photos"
 
 
 def table_name() -> str:
@@ -66,6 +66,10 @@ def upload_photo(filename: str, image_bytes: bytes) -> str:
     """Upload JPEG bytes. Returns the public URL."""
     client = get_client()
     bucket = bucket_name()
+    try:
+        client.storage.get_bucket(bucket)
+    except Exception:
+        client.storage.create_bucket(bucket, options={"public": True})
     client.storage.from_(bucket).upload(
         path=filename,
         file=image_bytes,
