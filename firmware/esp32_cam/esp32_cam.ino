@@ -9,6 +9,7 @@
 
 #include "esp_camera.h"
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
@@ -127,23 +128,47 @@ static bool uploadJpegToPlantIdBridge() {
     return false;
   }
 
-  HTTPClient http;
-  http.setTimeout(60000);
+  // HTTP -11 = read timeout (dead host or Render cold start).
+  const int maxAttempts = 3;
   bool ok = false;
+  const bool https = String(PLANTID_INGEST_URL).startsWith("https://");
 
-  if (http.begin(PLANTID_INGEST_URL)) {
-    http.addHeader("Content-Type", "image/jpeg");
-    http.addHeader("X-Device", "esp32-cam");
-    int code = http.POST(fb->buf, fb->len);
-    String body = http.getString();
-    Serial.printf("[CAM] upload HTTP %d\n", code);
-    if (body.length() > 0) {
-      Serial.println(body.substring(0, min((int)body.length(), 240)));
+  for (int attempt = 1; attempt <= maxAttempts && !ok; attempt++) {
+    HTTPClient http;
+    http.setTimeout(45000);
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+
+    WiFiClientSecure secure;
+    bool began = false;
+    if (https) {
+      secure.setInsecure();
+      secure.setTimeout(45);
+      began = http.begin(secure, PLANTID_INGEST_URL);
+    } else {
+      began = http.begin(PLANTID_INGEST_URL);
     }
-    ok = (code >= 200 && code < 300);
-    http.end();
-  } else {
-    Serial.println("[CAM] http.begin failed");
+
+    if (!began) {
+      Serial.printf("[CAM] http.begin failed (try %d/%d)\n", attempt, maxAttempts);
+    } else {
+      http.addHeader("Content-Type", "image/jpeg");
+      http.addHeader("X-Device", "esp32-cam");
+      int code = http.POST(fb->buf, fb->len);
+      String body = http.getString();
+      Serial.printf("[CAM] upload HTTP %d (try %d/%d)\n", code, attempt, maxAttempts);
+      if (body.length() > 0) {
+        Serial.println(body.substring(0, min((int)body.length(), 240)));
+      }
+      ok = (code >= 200 && code < 300);
+      http.end();
+      if (code == -11) {
+        Serial.println("[CAM] HTTP -11 timeout — server asleep or wrong URL");
+      }
+    }
+
+    if (!ok && attempt < maxAttempts) {
+      delay(4000);
+    }
   }
 
   esp_camera_fb_return(fb);
