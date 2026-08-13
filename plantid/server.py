@@ -23,10 +23,15 @@ from flask import Flask, jsonify, request, render_template, send_from_directory
 from .client import PlantIdClient, PlantIdError
 from .decision import classify_nutrient, decide_dose
 from .esp_trigger import trigger_pump
+from . import supabase_storage
 
 load_dotenv()
 
 app = Flask(__name__)
+
+# When true, photos + results are pushed to Supabase Storage/table in addition
+# to (or instead of) local disk. Set SUPABASE_ENABLED=0 to disable entirely.
+SUPABASE_ENABLED = os.getenv("SUPABASE_ENABLED", "1").strip() not in ("0", "false", "False")
 
 
 @app.after_request
@@ -165,6 +170,34 @@ def _save_jpeg(image_bytes: bytes) -> Path:
     return image_path
 
 
+def _upload_to_supabase(
+    image_path: Path,
+    image_bytes: bytes,
+    *,
+    decision: dict | None = None,
+    pumped: bool | None = None,
+) -> str | None:
+    """
+    Push the photo (and optional decision/pumped info) to Supabase.
+    Returns the public URL on success, or None if Supabase is disabled
+    or upload fails (failure is logged, never raised — local save already
+    succeeded so a Supabase hiccup shouldn't break the ESP32's request).
+    """
+    if not SUPABASE_ENABLED:
+        return None
+    try:
+        public_url = supabase_storage.upload_photo(image_path.name, image_bytes)
+        supabase_storage.insert_photo_record(
+            image_path.name, public_url, decision=decision, pumped=pumped
+        )
+        return public_url
+    except supabase_storage.SupabaseNotConfigured as exc:
+        print(f"[SUPABASE] not configured, skipping upload: {exc}")
+    except Exception as exc:
+        print(f"[SUPABASE] upload failed for {image_path.name}: {exc}")
+    return None
+
+
 @app.route("/upload", methods=["POST", "OPTIONS"])
 def upload():
     """Save JPEG only (no Plant.id, no pump). Used by the still-test sketch."""
@@ -177,7 +210,17 @@ def upload():
 
     image_path = _save_jpeg(image_bytes)
     print(f"[UPLOAD] saved {image_path.name} ({len(image_bytes)} bytes)")
-    return jsonify({"ok": True, "saved": str(image_path), "bytes": len(image_bytes)})
+
+    public_url = _upload_to_supabase(image_path, image_bytes)
+
+    return jsonify(
+        {
+            "ok": True,
+            "saved": str(image_path),
+            "bytes": len(image_bytes),
+            "supabase_url": public_url,
+        }
+    )
 
 
 @app.post("/ingest")
@@ -237,10 +280,19 @@ def ingest():
         json.dumps(result, indent=2), encoding="utf-8"
     )
 
+    public_url = _upload_to_supabase(
+        image_path,
+        image_bytes,
+        decision=decision.to_dict(),
+        pumped=result["pumped"],
+    )
+    result["supabase_url"] = public_url
+
     print(
         f"[INGEST] {image_path.name} → healthy={decision.is_healthy} "
         f"nutrient={decision.nutrient_deficient} issue={decision.top_issue} "
-        f"dose={decision.dose_ms}ms pumped={result['pumped']}"
+        f"dose={decision.dose_ms}ms pumped={result['pumped']} "
+        f"supabase={'ok' if public_url else 'skipped'}"
     )
     return jsonify(result)
 
