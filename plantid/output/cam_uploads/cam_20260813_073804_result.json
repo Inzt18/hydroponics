@@ -1,0 +1,33 @@
+{
+  "ok": true,
+  "saved": "C:\\xampp\\htdocs\\solar-esp32-smart-fertigation\\plantid\\output\\cam_uploads\\cam_20260813_073804.jpg",
+  "decision": {
+    "is_healthy": false,
+    "should_dose": true,
+    "severity_pct": 35,
+    "dose_ms": 6150,
+    "top_issue": "nutrient deficiency",
+    "top_probability": 0.3527,
+    "reason": "Plant.id issue 'nutrient deficiency' prob=35.27%",
+    "treatment_hint": "Replant the plant into fresh soil rich in nutrients.; Add manure or compost to the soil.; Apply missing nutrients to the plant foliage (suitable for quick help). Follow the instructions on the chosen product to prevent excessive fertilizer usage.; Apply missing nutrients to the soil (suitable for long-term help). Follow the instructions on the chosen product to prevent excessive fertilizer usage.; Apply fertilizer regularly. Fertilizing is especially important during spring and summer.; Change the soil regularly. Plants should be repotted when the soil is compacted, depleted of nutrients, and no longer retains water.",
+    "raw_suggestions": [
+      {
+        "name": "nutrient deficiency",
+        "probability": 0.3527,
+        "description": "Nutrient deficiency is caused by a lack of macronutrients or micronutrients essential for the plant. This can be caused by insufficient amounts of nutrients in the soil or unsuitable conditions for nutrients uptake.",
+        "treatment": "Replant the plant into fresh soil rich in nutrients.; Add manure or compost to the soil.; Apply missing nutrients to the plant foliage (suitable for quick help). Follow the instructions on the chosen product to prevent excessive fertilizer usage.; Apply missing nutrients to the soil (suitable for long-term help). Follow the instructions on the chosen product to prevent excessive fertilizer usage.; Apply fertilizer regularly. Fertilizing is especially important during spring and summer.; Change the soil regularly. Plants should be repotted when the soil is compacted, depleted of nutrients, and no longer retains water.",
+        "is_nutrient_like": true
+      },
+      {
+        "name": "Pucciniales",
+        "probability": 0.1886,
+        "description": "Rust is a group of fungal diseases caused mostly by Pucciniales fungi. They spread through tiny spores moved by wind or splashing water and thrive on leaves that stay wet, especially on crowded or shaded plants. You can recognize rust by small powdery or blister-like spots that are yellow, orange, brown, or rust-colored, often most visible on the underside of leaves; matching yellow spots may show on the top side. Infected leaves can yellow, curl, and drop early. Commonly affected plants include roses, hollyhocks, snapdragons, many lawn grasses, fruit trees such as pear (especially where junipers grow nearby), and ornamentals like geraniums and fuchsias.",
+        "treatment": "improve airflow and light by pruning to open the canopy, staking tall plants, and thinning crowded beds.; water wisely by watering at the soil level in the morning and avoiding wetting leaves.; use products labeled for rust on your specific plant when cultural steps are insufficient.; apply sulfur, copper-based fungicides used carefully to avoid buildup, or potassium bicarbonate as home-garden options.; choose resistant or less-susceptible varieties when available.; plant with good spacing and in spots with morning sun so leaves dry quickly.",
+        "is_nutrient_like": true
+      }
+    ]
+  },
+  "plant_id_access_token": "qfStOguF1mOEiHK",
+  "esp_trigger_error": "HTTPConnectionPool(host='192.168.1.50', port=80): Max retries exceeded with url: /dose (Caused by ConnectTimeoutError(<HTTPConnection(host='192.168.1.50', port=80) at 0x22624ec4f50>, 'Connection to 192.168.1.50 timed out. (connect timeout=10.0)'))",
+  "pumped": false
+}

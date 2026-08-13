@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "saved": "C:\\xampp\\htdocs\\solar-esp32-smart-fertigation\\plantid\\output\\cam_uploads\\cam_20260813_073420.jpg",
+  "decision": {
+    "is_healthy": true,
+    "should_dose": false,
+    "severity_pct": 0,
+    "dose_ms": 0,
+    "top_issue": "healthy",
+    "top_probability": 0.9983000159263611,
+    "reason": "Plant.id reports healthy plant",
+    "treatment_hint": "",
+    "raw_suggestions": [
+      {
+        "name": "Fungi",
+        "probability": 0.0042,
+        "description": "Fungi take energy from the plants on which they live, causing damage to the plant. Fungal infections are responsible for approximately two-thirds of infectious plant diseases and cause wilting, molding, rusts, scabs, rotted tissue, and other problems.",
+        "treatment": "If possible remove and destroy the infected parts of the plant. Burn it, toss it into the garbage, or bury it deeply. Do not compost.; Apply ecological products for plant protection (e.g. neem oil, baking soda, soap).; If necessary, apply a fungicide. If you don' know the fungus species, choose fungicide based on the infected plant (e.g. house plant, garden plant, tree).; Use resistant species and cultivars as well as healthy, certified seeds and seedlings.; Ensure having good soil drainage to avoid overwatering.",
+        "is_nutrient_like": false
+      }
+    ]
+  },
+  "plant_id_access_token": "ToFUNlYER2BQMQ3",
+  "pumped": false,
+  "pump_reason": "below threshold/healthy"
+}

@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fertigation Monitor</title>
+  <style>
+    :root {
+      --bg: #122018;
+      --panel: #1c2c22;
+      --line: #31453a;
+      --text: #e7f2ea;
+      --muted: #9bb5a6;
+      --ok: #3ddc97;
+      --warn: #f0b429;
+      --bad: #ff6b6b;
+      --accent: #4aa3ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: radial-gradient(circle at top, #1a3024, var(--bg));
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    h1 { margin: 0; font-size: 1.25rem; }
+    .sub { color: var(--muted); font-size: 0.9rem; margin-top: 4px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #15261c;
+      font-size: 0.85rem;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--warn);
+    }
+    .dot.ok { background: var(--ok); }
+    .dot.bad { background: var(--bad); }
+    main {
+      padding: 20px 24px 40px;
+      display: grid;
+      gap: 16px;
+      grid-template-columns: 1.2fr 1fr;
+    }
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px;
+    }
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 1rem;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .metric {
+      background: #15261c;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+    }
+    .metric .label { color: var(--muted); font-size: 0.78rem; }
+    .metric .value { font-size: 1.2rem; margin-top: 4px; word-break: break-word; }
+    img.preview {
+      width: 100%;
+      max-height: 360px;
+      object-fit: contain;
+      background: #0d1611;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+    }
+    .empty {
+      color: var(--muted);
+      padding: 24px 8px;
+      text-align: center;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    th, td {
+      text-align: left;
+      padding: 8px 6px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 600; font-size: 0.75rem; }
+    form.upload {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-top: 10px;
+    }
+    input[type=file] { color: var(--muted); }
+    button {
+      background: var(--accent);
+      color: #041018;
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    .muted { color: var(--muted); font-size: 0.85rem; }
+    .span-2 { grid-column: 1 / -1; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Smart Fertigation Monitor</h1>
+      <div class="sub">ESP32-CAM → Plant.id → pump decision</div>
+    </div>
+    <div class="pill"><span id="statusDot" class="dot"></span> <span id="statusText">Checking...</span></div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Latest detection</h2>
+      <div id="latestEmpty" class="empty">No images yet. When the camera uploads (or you upload below), values appear here.</div>
+      <div id="latestPanel" style="display:none">
+        <img id="latestImg" class="preview" alt="Latest leaf capture" />
+        <div class="grid" style="margin-top:12px">
+          <div class="metric span-2" style="border-color:#f0b429">
+            <div class="label">Nutrient lacking</div>
+            <div class="value" id="mNutrient">—</div>
+          </div>
+          <div class="metric"><div class="label">Healthy?</div><div class="value" id="mHealthy">—</div></div>
+          <div class="metric"><div class="label">Plant.id issue</div><div class="value" id="mIssue">—</div></div>
+          <div class="metric"><div class="label">Severity</div><div class="value" id="mSeverity">—</div></div>
+          <div class="metric"><div class="label">Dose</div><div class="value" id="mDose">—</div></div>
+          <div class="metric"><div class="label">Pump</div><div class="value" id="mPump">—</div></div>
+          <div class="metric"><div class="label">Time</div><div class="value" id="mTime">—</div></div>
+          <div class="metric span-2"><div class="label">Other possible nutrients</div><div class="value" id="mNutrientList">—</div></div>
+          <div class="metric span-2"><div class="label">Reason</div><div class="value" id="mReason">—</div></div>
+        </div>
+      </div>
+      <p class="muted" style="margin-top:14px">Manual test (works even without ESP32-CAM):</p>
+      <form class="upload" id="uploadForm">
+        <input type="file" id="fileInput" accept="image/*" required />
+        <button type="submit" id="uploadBtn">Analyze photo</button>
+      </form>
+      <p class="muted" id="uploadMsg"></p>
+    </section>
+
+    <section class="card">
+      <h2>Recent history</h2>
+      <div id="historyEmpty" class="empty">Waiting for first result...</div>
+      <div style="overflow-x:auto">
+        <table id="historyTable" style="display:none">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Nutrient</th>
+              <th>Issue</th>
+              <th>Severity</th>
+              <th>Dose</th>
+              <th>Pump</th>
+            </tr>
+          </thead>
+          <tbody id="historyBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    async function refresh() {
+      try {
+        const health = await fetch('/health').then(r => r.json());
+        document.getElementById('statusDot').className = 'dot ok';
+        document.getElementById('statusText').textContent = 'Server online';
+      } catch {
+        document.getElementById('statusDot').className = 'dot bad';
+        document.getElementById('statusText').textContent = 'Server offline';
+      }
+
+      const data = await fetch('/api/latest').then(r => r.json());
+      const items = data.items || [];
+      if (!items.length) {
+        document.getElementById('latestEmpty').style.display = 'block';
+        document.getElementById('latestPanel').style.display = 'none';
+        document.getElementById('historyEmpty').style.display = 'block';
+        document.getElementById('historyTable').style.display = 'none';
+        return;
+      }
+
+      const latest = items[0];
+      document.getElementById('latestEmpty').style.display = 'none';
+      document.getElementById('latestPanel').style.display = 'block';
+      document.getElementById('latestImg').src = latest.image_url + '?t=' + Date.now();
+      const d = latest.decision || {};
+      document.getElementById('mNutrient').textContent = d.nutrient_deficient || 'None';
+      document.getElementById('mHealthy').textContent = d.is_healthy ? 'Yes' : 'No';
+      document.getElementById('mIssue').textContent = d.top_issue || '—';
+      document.getElementById('mSeverity').textContent = (d.severity_pct ?? '—') + '%';
+      document.getElementById('mDose').textContent = (d.dose_ms ?? 0) + ' ms';
+      document.getElementById('mPump').textContent = latest.pumped ? 'ON' : 'OFF';
+      document.getElementById('mTime').textContent = latest.stamp || '—';
+      document.getElementById('mReason').textContent = d.reason || '—';
+      const cands = d.nutrient_candidates || [];
+      document.getElementById('mNutrientList').textContent = cands.length
+        ? cands.map(c => `${c.nutrient} (${Math.round((c.probability || 0) * 100)}%)`).join(', ')
+        : 'None detected';
+
+      document.getElementById('historyEmpty').style.display = 'none';
+      document.getElementById('historyTable').style.display = 'table';
+      const body = document.getElementById('historyBody');
+      body.innerHTML = items.map(item => {
+        const dd = item.decision || {};
+        return `<tr>
+          <td>${item.stamp || ''}</td>
+          <td>${dd.nutrient_deficient || '—'}</td>
+          <td>${dd.top_issue || ''}</td>
+          <td>${dd.severity_pct ?? ''}%</td>
+          <td>${dd.dose_ms ?? 0} ms</td>
+          <td>${item.pumped ? 'ON' : 'OFF'}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const file = document.getElementById('fileInput').files[0];
+      if (!file) return;
+      const btn = document.getElementById('uploadBtn');
+      const msg = document.getElementById('uploadMsg');
+      btn.disabled = true;
+      msg.textContent = 'Analyzing with Plant.id...';
+      try {
+        const fd = new FormData();
+        fd.append('image', file);
+        const res = await fetch('/ingest', { method: 'POST', body: fd });
+        const json = await res.json();
+        if (!res.ok || !json.ok) throw new Error(json.error || 'Analyze failed');
+        msg.textContent = 'Done. Values updated below.';
+        await refresh();
+      } catch (err) {
+        msg.textContent = 'Error: ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>

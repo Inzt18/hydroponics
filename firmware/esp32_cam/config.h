@@ -26,7 +26,7 @@ static const char* WIFI_PASSWORD = "PLDTWIFI98EMC";
 
 // Laptop running: python -m plantid.server
 // Example: "http://192.168.1.20:8080/ingest"
-static const char* PLANTID_INGEST_URL = "http://192.168.1.13:8080/ingest";
+static const char* PLANTID_INGEST_URL = "http://192.168.1.3:8080/ingest";
 
 // Camera model: AI Thinker ESP32-CAM
 #define CAMERA_MODEL_AI_THINKER

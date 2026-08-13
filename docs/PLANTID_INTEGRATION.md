@@ -13,9 +13,16 @@ Dose decision
 ESP32 controller → relay → water pump
 ```
 
-## Setup
+## Dashboard (see detected values)
+```powershell
+python -m plantid.server
+```
+Open in browser: [http://127.0.0.1:8080/](http://127.0.0.1:8080/)
 
-### 1) API key + .env
+You can:
+- See latest Plant.id healthy/issue/severity/dose/pump values
+- View recent history
+- Manually upload a leaf photo to test even before ESP32-CAM power is stable
 ```powershell
 cd C:\xampp\htdocs\solar-esp32-smart-fertigation
 copy .env.example .env

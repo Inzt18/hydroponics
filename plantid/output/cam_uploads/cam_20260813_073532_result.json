@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "saved": "C:\\xampp\\htdocs\\solar-esp32-smart-fertigation\\plantid\\output\\cam_uploads\\cam_20260813_073532.jpg",
+  "decision": {
+    "is_healthy": false,
+    "should_dose": true,
+    "severity_pct": 85,
+    "dose_ms": 10650,
+    "top_issue": "nutrient deficiency",
+    "top_probability": 0.8507,
+    "reason": "Plant.id issue 'nutrient deficiency' prob=85.07%",
+    "treatment_hint": "Replant the plant into fresh soil rich in nutrients.; Add manure or compost to the soil.; Apply missing nutrients to the plant foliage (suitable for quick help). Follow the instructions on the chosen product to prevent excessive fertilizer usage.; Apply missing nutrients to the soil (suitable for long-term help). Follow the instructions on the chosen product to prevent excessive fertilizer usage.; Apply fertilizer regularly. Fertilizing is especially important during spring and summer.; Change the soil regularly. Plants should be repotted when the soil is compacted, depleted of nutrients, and no longer retains water.",
+    "raw_suggestions": [
+      {
+        "name": "nutrient deficiency",
+        "probability": 0.8507,
+        "description": "Nutrient deficiency is caused by a lack of macronutrients or micronutrients essential for the plant. This can be caused by insufficient amounts of nutrients in the soil or unsuitable conditions for nutrients uptake.",
+        "treatment": "Replant the plant into fresh soil rich in nutrients.; Add manure or compost to the soil.; Apply missing nutrients to the plant foliage (suitable for quick help). Follow the instructions on the chosen product to prevent excessive fertilizer usage.; Apply missing nutrients to the soil (suitable for long-term help). Follow the instructions on the chosen product to prevent excessive fertilizer usage.; Apply fertilizer regularly. Fertilizing is especially important during spring and summer.; Change the soil regularly. Plants should be repotted when the soil is compacted, depleted of nutrients, and no longer retains water.",
+        "is_nutrient_like": true
+      }
+    ]
+  },
+  "plant_id_access_token": "gloyYL5YoixyKKP",
+  "esp_trigger_error": "HTTPConnectionPool(host='192.168.1.50', port=80): Max retries exceeded with url: /dose (Caused by ConnectTimeoutError(<HTTPConnection(host='192.168.1.50', port=80) at 0x22624eaa3c0>, 'Connection to 192.168.1.50 timed out. (connect timeout=10.0)'))",
+  "pumped": false
+}
