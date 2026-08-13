@@ -121,6 +121,7 @@ def _item_from_local(jpg_path: Path) -> dict:
         "decision": {},
         "bytes": jpg_path.stat().st_size,
         "created_at": datetime.fromtimestamp(jpg_path.stat().st_mtime).isoformat(),
+        "source": "render",
     }
     result_path = OUT_DIR / f"cam_{stamp}_result.json"
     if result_path.exists():
@@ -150,6 +151,7 @@ def _item_from_row(row: dict) -> dict:
         "bytes": row.get("bytes"),
         "created_at": row.get("created_at"),
         "device": row.get("device") or "esp32-cam",
+        "source": "supabase",
     }
 
 
@@ -177,7 +179,28 @@ def _load_results(limit: int = 40) -> list[dict]:
                 else:
                     by_name[filename] = remote
         except Exception as exc:
-            print(f"[SUPABASE] list failed: {exc}")
+            print(f"[SUPABASE] table list failed: {exc}")
+        try:
+            for obj in supabase_storage.list_bucket_files(max(limit, 40)):
+                filename = obj.get("filename") or ""
+                if not filename:
+                    continue
+                if filename not in by_name:
+                    by_name[filename] = {
+                        "id": None,
+                        "stamp": _stamp_from_name(filename),
+                        "image_name": filename,
+                        "image_url": obj.get("image_url"),
+                        "analyzed": False,
+                        "pumped": False,
+                        "decision": {},
+                        "bytes": obj.get("bytes"),
+                        "created_at": obj.get("created_at"),
+                        "device": "esp32-cam",
+                        "source": "supabase",
+                    }
+        except Exception as exc:
+            print(f"[SUPABASE] storage list failed: {exc}")
 
     items = sorted(
         by_name.values(),
@@ -195,6 +218,21 @@ def dashboard():
 @app.get("/api/latest")
 def api_latest():
     return jsonify({"ok": True, "items": _load_results(40)})
+
+
+@app.get("/api/photos")
+def api_photos():
+    """ESP32-CAM stills from Supabase Storage (for the Choose File picker)."""
+    items = _load_results(80)
+    supabase_ok = SUPABASE_ENABLED and supabase_storage.is_configured()
+    return jsonify(
+        {
+            "ok": True,
+            "supabase": supabase_ok,
+            "count": len(items),
+            "items": items,
+        }
+    )
 
 
 @app.get("/uploads/<path:filename>")

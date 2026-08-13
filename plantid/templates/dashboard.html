@@ -121,11 +121,48 @@
       font-weight: 600;
       cursor: pointer;
     }
-    button.secondary {
-      background: transparent;
+    button.choose {
+      background: #15261c;
       color: var(--text);
       border: 1px solid var(--line);
     }
+    .file-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-top: 10px;
+    }
+    .chosen {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    .modal-bg {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.62);
+      z-index: 40;
+      padding: 24px;
+      overflow: auto;
+    }
+    .modal-bg.open { display: block; }
+    .modal {
+      max-width: 860px;
+      margin: 4vh auto;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px;
+    }
+    .modal-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .modal-head h2 { margin: 0; }
     button:disabled { opacity: 0.5; cursor: wait; }
     .muted { color: var(--muted); font-size: 0.85rem; }
     .span-2 { grid-column: 1 / -1; }
@@ -180,7 +217,7 @@
   <header>
     <div>
       <h1>Smart Fertigation Monitor</h1>
-      <div class="sub">ESP32-CAM → Supabase storage → choose a photo to analyze</div>
+      <div class="sub">ESP32-CAM uploads to the server → Choose File to pick one → Analyze</div>
     </div>
     <div class="pill"><span id="statusDot" class="dot"></span> <span id="statusText">Checking...</span></div>
   </header>
@@ -192,10 +229,9 @@
       <div id="latestPanel" style="display:none">
         <img id="latestImg" class="preview" alt="Selected capture" />
         <div class="actions">
-          <button type="button" id="analyzeBtn">Analyze this photo</button>
           <span class="muted" id="selectedName"></span>
         </div>
-        <p class="muted" id="analyzeMsg"></p>
+        <p class="muted" id="analyzeHint"></p>
         <div class="grid" style="margin-top:12px">
           <div class="metric span-2" style="border-color:#f0b429">
             <div class="label">Nutrient lacking</div>
@@ -211,12 +247,13 @@
           <div class="metric span-2"><div class="label">Reason</div><div class="value" id="mReason">—</div></div>
         </div>
       </div>
-      <p class="muted" style="margin-top:14px">Add a photo to the library (saved to Supabase, not analyzed yet):</p>
-      <form class="upload" id="uploadForm">
-        <input type="file" id="fileInput" accept="image/*" required />
-        <button type="submit" id="uploadBtn" class="secondary">Save photo</button>
-      </form>
-      <p class="muted" id="uploadMsg"></p>
+      <p class="muted" style="margin-top:14px">Choose File lists photos the ESP32-CAM already uploaded to this server:</p>
+      <div class="file-row">
+        <button type="button" class="choose" id="chooseBtn">Choose File</button>
+        <span class="chosen" id="chosenLabel">No file chosen</span>
+        <button type="button" id="analyzeBtn" disabled>Analyze photo</button>
+      </div>
+      <p class="muted" id="analyzeMsg"></p>
     </section>
 
     <section class="card">
@@ -242,6 +279,20 @@
     </section>
   </main>
 
+  <div class="modal-bg" id="photoModal" role="dialog" aria-label="ESP32-CAM photos on the server">
+    <div class="modal">
+      <div class="modal-head">
+        <div>
+          <h2>ESP32-CAM photos</h2>
+          <div class="muted" id="photoModalStatus">Loading...</div>
+        </div>
+        <button type="button" class="choose" id="closeModalBtn">Close</button>
+      </div>
+      <div id="photoModalEmpty" class="empty">No camera stills on the server yet.</div>
+      <div id="photoModalGallery" class="gallery" style="display:none; max-height:70vh"></div>
+    </div>
+  </div>
+
   <script>
     let items = [];
     let selectedName = null;
@@ -264,6 +315,7 @@
       document.getElementById('latestPanel').style.display = 'block';
       document.getElementById('latestImg').src = item.image_url + (item.image_url.includes('?') ? '&' : '?') + 't=' + Date.now();
       document.getElementById('selectedName').textContent = item.image_name;
+      document.getElementById('chosenLabel').textContent = item.image_name;
       document.getElementById('mTime').textContent = item.stamp || '—';
       document.getElementById('analyzeBtn').disabled = false;
 
@@ -352,9 +404,12 @@
     }
 
     document.getElementById('analyzeBtn').addEventListener('click', async () => {
-      if (!selectedName) return;
-      const btn = document.getElementById('analyzeBtn');
       const msg = document.getElementById('analyzeMsg');
+      if (!selectedName) {
+        msg.textContent = 'Click Choose File and pick an ESP32-CAM photo first.';
+        return;
+      }
+      const btn = document.getElementById('analyzeBtn');
       const item = items.find(i => i.image_name === selectedName);
       btn.disabled = true;
       msg.textContent = 'Analyzing with Plant.id...';
@@ -378,28 +433,62 @@
       }
     });
 
-    document.getElementById('uploadForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const file = document.getElementById('fileInput').files[0];
-      if (!file) return;
-      const btn = document.getElementById('uploadBtn');
-      const msg = document.getElementById('uploadMsg');
-      btn.disabled = true;
-      msg.textContent = 'Saving to Supabase...';
-      try {
-        const fd = new FormData();
-        fd.append('image', file);
-        const res = await fetch('/upload', { method: 'POST', body: fd });
-        const json = await res.json();
-        if (!res.ok || !json.ok) throw new Error(json.error || 'Save failed');
-        selectedName = json.image_name;
-        msg.textContent = 'Saved. Select it on the right, then Analyze.';
-        await refresh();
-      } catch (err) {
-        msg.textContent = 'Error: ' + err.message;
-      } finally {
-        btn.disabled = false;
+    function closePhotoModal() {
+      document.getElementById('photoModal').classList.remove('open');
+    }
+
+    function renderPhotoModal(list) {
+      const empty = document.getElementById('photoModalEmpty');
+      const gallery = document.getElementById('photoModalGallery');
+      if (!list.length) {
+        empty.style.display = 'block';
+        gallery.style.display = 'none';
+        empty.textContent = 'No ESP32-CAM photos on the server yet. Wait for the next camera upload.';
+        return;
       }
+      empty.style.display = 'none';
+      gallery.style.display = 'grid';
+      gallery.innerHTML = list.map(item => `
+        <button type="button" class="thumb ${item.image_name === selectedName ? 'selected' : ''}" data-name="${item.image_name}">
+          <span class="badge ${item.analyzed ? 'done' : 'pending'}">${item.analyzed ? 'Analyzed' : 'CAM'}</span>
+          <img src="${item.image_url}" alt="${item.image_name}" />
+          <div class="cap">${item.stamp || item.image_name}</div>
+        </button>
+      `).join('');
+      gallery.querySelectorAll('.thumb').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const item = items.find(i => i.image_name === btn.dataset.name)
+            || list.find(i => i.image_name === btn.dataset.name);
+          if (item && !items.find(i => i.image_name === item.image_name)) {
+            items.unshift(item);
+          }
+          showItem(item);
+          renderGallery();
+          closePhotoModal();
+        });
+      });
+    }
+
+    document.getElementById('chooseBtn').addEventListener('click', async () => {
+      const modal = document.getElementById('photoModal');
+      const status = document.getElementById('photoModalStatus');
+      modal.classList.add('open');
+      status.textContent = 'Loading photos the camera saved on this server...';
+      try {
+        const data = await fetch('/api/photos').then(r => r.json());
+        const list = data.items || [];
+        items = list;
+        status.textContent = `${list.length} ESP32-CAM photo(s) saved on the server`;
+        renderPhotoModal(list);
+      } catch (err) {
+        status.textContent = 'Could not load camera photos: ' + err.message;
+        renderPhotoModal([]);
+      }
+    });
+
+    document.getElementById('closeModalBtn').addEventListener('click', closePhotoModal);
+    document.getElementById('photoModal').addEventListener('click', (e) => {
+      if (e.target.id === 'photoModal') closePhotoModal();
     });
 
     refresh();

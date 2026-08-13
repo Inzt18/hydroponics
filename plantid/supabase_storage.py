@@ -172,3 +172,33 @@ def get_by_filename(filename: str) -> dict[str, Any] | None:
     )
     rows = result.data or []
     return rows[0] if rows else None
+
+
+def list_bucket_files(limit: int = 80) -> list[dict[str, Any]]:
+    """List JPEG objects in the CAM storage bucket (newest first)."""
+    client = get_client()
+    bucket = bucket_name()
+    entries = client.storage.from_(bucket).list(
+        "",
+        {
+            "limit": limit,
+            "offset": 0,
+            "sortBy": {"column": "created_at", "order": "desc"},
+        },
+    )
+    photos: list[dict[str, Any]] = []
+    for entry in entries or []:
+        name = str(entry.get("name") or "")
+        lower = name.lower()
+        if not lower.endswith((".jpg", ".jpeg", ".png")):
+            continue
+        photos.append(
+            {
+                "filename": name,
+                "storage_path": name,
+                "image_url": client.storage.from_(bucket).get_public_url(name),
+                "created_at": entry.get("created_at") or entry.get("updated_at"),
+                "bytes": ((entry.get("metadata") or {}).get("size")),
+            }
+        )
+    return photos
