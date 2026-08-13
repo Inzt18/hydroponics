@@ -23,7 +23,13 @@ from flask import Flask, jsonify, request, render_template, send_from_directory
 from .client import PlantIdClient, PlantIdError
 from .decision import classify_nutrient, decide_dose
 from .esp_trigger import trigger_pump
+<<<<<<< Updated upstream
 from . import supabase_storage
+=======
+from .supabase_sync import is_configured as supabase_configured
+from .supabase_sync import get_client as supabase_client
+from .supabase_sync import sync_capture
+>>>>>>> Stashed changes
 
 load_dotenv()
 
@@ -143,6 +149,7 @@ def health():
             "auto_trigger": AUTO_TRIGGER,
             "esp_url": os.getenv("ESP32_CONTROLLER_URL", ""),
             "cam_still_url": CAM_STILL_URL,
+            "supabase": supabase_configured(),
             "dashboard": "/",
         }
     )
@@ -167,6 +174,7 @@ def _save_jpeg(image_bytes: bytes) -> Path:
         image_path = OUT_DIR / f"cam_{stamp}_{n}.jpg"
         n += 1
     image_path.write_bytes(image_bytes)
+    sync_capture(image_path, image_bytes)
     return image_path
 
 
@@ -279,6 +287,7 @@ def ingest():
     (OUT_DIR / f"cam_{stamp}_result.json").write_text(
         json.dumps(result, indent=2), encoding="utf-8"
     )
+    sync_capture(image_path, image_bytes, result=result)
 
     public_url = _upload_to_supabase(
         image_path,
@@ -289,7 +298,7 @@ def ingest():
     result["supabase_url"] = public_url
 
     print(
-        f"[INGEST] {image_path.name} → healthy={decision.is_healthy} "
+        f"[INGEST] {image_path.name} -> healthy={decision.is_healthy} "
         f"nutrient={decision.nutrient_deficient} issue={decision.top_issue} "
         f"dose={decision.dose_ms}ms pumped={result['pumped']} "
         f"supabase={'ok' if public_url else 'skipped'}"
@@ -330,6 +339,8 @@ def main() -> None:
     print("ESP32-CAM should POST JPEG to /ingest (Plant.id) or /upload (save only)")
     print(f"Auto pump trigger: {AUTO_TRIGGER}")
     print(f"ESP32_CONTROLLER_URL={os.getenv('ESP32_CONTROLLER_URL', '')}")
+    if supabase_client():
+        print("Supabase: connected (captures -> Storage + public.captures)")
     if CAM_STILL_URL:
         print(f"Pulling stills from {CAM_STILL_URL}")
         threading.Thread(target=_pull_cam_stills, daemon=True).start()
