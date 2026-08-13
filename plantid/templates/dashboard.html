@@ -121,26 +121,81 @@
       font-weight: 600;
       cursor: pointer;
     }
+    button.secondary {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
     button:disabled { opacity: 0.5; cursor: wait; }
     .muted { color: var(--muted); font-size: 0.85rem; }
     .span-2 { grid-column: 1 / -1; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+      gap: 8px;
+      max-height: 52vh;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .thumb {
+      position: relative;
+      border: 2px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+      cursor: pointer;
+      background: #0d1611;
+      padding: 0;
+      color: inherit;
+      text-align: left;
+    }
+    .thumb.selected { border-color: var(--accent); }
+    .thumb img {
+      width: 100%;
+      height: 88px;
+      object-fit: cover;
+      display: block;
+    }
+    .thumb .cap {
+      font-size: 0.68rem;
+      padding: 4px 6px 6px;
+      color: var(--muted);
+    }
+    .badge {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: #15261c;
+      border: 1px solid var(--line);
+    }
+    .badge.pending { color: var(--warn); }
+    .badge.done { color: var(--ok); }
   </style>
 </head>
 <body>
   <header>
     <div>
       <h1>Smart Fertigation Monitor</h1>
-      <div class="sub">ESP32-CAM → Plant.id → pump decision</div>
+      <div class="sub">ESP32-CAM → Supabase storage → choose a photo to analyze</div>
     </div>
     <div class="pill"><span id="statusDot" class="dot"></span> <span id="statusText">Checking...</span></div>
   </header>
 
   <main>
     <section class="card">
-      <h2>Latest detection</h2>
-      <div id="latestEmpty" class="empty">No images yet. When the camera uploads (or you upload below), values appear here.</div>
+      <h2>Selected photo</h2>
+      <div id="latestEmpty" class="empty">No camera photos yet. When the ESP32-CAM uploads, they appear on the right.</div>
       <div id="latestPanel" style="display:none">
-        <img id="latestImg" class="preview" alt="Latest leaf capture" />
+        <img id="latestImg" class="preview" alt="Selected capture" />
+        <div class="actions">
+          <button type="button" id="analyzeBtn">Analyze this photo</button>
+          <span class="muted" id="selectedName"></span>
+        </div>
+        <p class="muted" id="analyzeMsg"></p>
         <div class="grid" style="margin-top:12px">
           <div class="metric span-2" style="border-color:#f0b429">
             <div class="label">Nutrient lacking</div>
@@ -156,17 +211,19 @@
           <div class="metric span-2"><div class="label">Reason</div><div class="value" id="mReason">—</div></div>
         </div>
       </div>
-      <p class="muted" style="margin-top:14px">Manual test (works even without ESP32-CAM):</p>
+      <p class="muted" style="margin-top:14px">Add a photo to the library (saved to Supabase, not analyzed yet):</p>
       <form class="upload" id="uploadForm">
         <input type="file" id="fileInput" accept="image/*" required />
-        <button type="submit" id="uploadBtn">Analyze photo</button>
+        <button type="submit" id="uploadBtn" class="secondary">Save photo</button>
       </form>
       <p class="muted" id="uploadMsg"></p>
     </section>
 
     <section class="card">
-      <h2>Recent history</h2>
-      <div id="historyEmpty" class="empty">Waiting for first result...</div>
+      <h2>Choose a picture</h2>
+      <div id="historyEmpty" class="empty">Waiting for the first camera still...</div>
+      <div id="gallery" class="gallery" style="display:none"></div>
+      <h2 style="margin-top:18px">Recent analysis</h2>
       <div style="overflow-x:auto">
         <table id="historyTable" style="display:none">
           <thead>
@@ -186,9 +243,69 @@
   </main>
 
   <script>
+    let items = [];
+    let selectedName = null;
+
+    function pendingMetrics() {
+      document.getElementById('mNutrient').textContent = 'Not analyzed yet';
+      document.getElementById('mHealthy').textContent = '—';
+      document.getElementById('mIssue').textContent = '—';
+      document.getElementById('mSeverity').textContent = '—';
+      document.getElementById('mDose').textContent = '—';
+      document.getElementById('mPump').textContent = '—';
+      document.getElementById('mNutrientList').textContent = 'Choose this photo, then click Analyze.';
+      document.getElementById('mReason').textContent = 'Stored in Supabase. Analysis runs only when you pick a picture.';
+    }
+
+    function showItem(item) {
+      if (!item) return;
+      selectedName = item.image_name;
+      document.getElementById('latestEmpty').style.display = 'none';
+      document.getElementById('latestPanel').style.display = 'block';
+      document.getElementById('latestImg').src = item.image_url + (item.image_url.includes('?') ? '&' : '?') + 't=' + Date.now();
+      document.getElementById('selectedName').textContent = item.image_name;
+      document.getElementById('mTime').textContent = item.stamp || '—';
+      document.getElementById('analyzeBtn').disabled = false;
+
+      const d = item.decision || {};
+      if (!item.analyzed) {
+        pendingMetrics();
+        return;
+      }
+      document.getElementById('mNutrient').textContent = d.nutrient_deficient || 'None';
+      document.getElementById('mHealthy').textContent = d.is_healthy ? 'Yes' : 'No';
+      document.getElementById('mIssue').textContent = d.top_issue || '—';
+      document.getElementById('mSeverity').textContent = (d.severity_pct ?? '—') + '%';
+      document.getElementById('mDose').textContent = (d.dose_ms ?? 0) + ' ms';
+      document.getElementById('mPump').textContent = item.pumped ? 'ON' : 'OFF';
+      document.getElementById('mReason').textContent = d.reason || '—';
+      const cands = d.nutrient_candidates || [];
+      document.getElementById('mNutrientList').textContent = cands.length
+        ? cands.map(c => `${c.nutrient} (${Math.round((c.probability || 0) * 100)}%)`).join(', ')
+        : 'None detected';
+    }
+
+    function renderGallery() {
+      const gallery = document.getElementById('gallery');
+      gallery.innerHTML = items.map(item => `
+        <button type="button" class="thumb ${item.image_name === selectedName ? 'selected' : ''}" data-name="${item.image_name}">
+          <span class="badge ${item.analyzed ? 'done' : 'pending'}">${item.analyzed ? 'Analyzed' : 'Pending'}</span>
+          <img src="${item.image_url}" alt="${item.image_name}" />
+          <div class="cap">${item.stamp || item.image_name}</div>
+        </button>
+      `).join('');
+      gallery.querySelectorAll('.thumb').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const item = items.find(i => i.image_name === btn.dataset.name);
+          showItem(item);
+          renderGallery();
+        });
+      });
+    }
+
     async function refresh() {
       try {
-        const health = await fetch('/health').then(r => r.json());
+        await fetch('/health').then(r => r.json());
         document.getElementById('statusDot').className = 'dot ok';
         document.getElementById('statusText').textContent = 'Server online';
       } catch {
@@ -197,37 +314,31 @@
       }
 
       const data = await fetch('/api/latest').then(r => r.json());
-      const items = data.items || [];
+      items = data.items || [];
       if (!items.length) {
         document.getElementById('latestEmpty').style.display = 'block';
         document.getElementById('latestPanel').style.display = 'none';
         document.getElementById('historyEmpty').style.display = 'block';
+        document.getElementById('gallery').style.display = 'none';
         document.getElementById('historyTable').style.display = 'none';
         return;
       }
 
-      const latest = items[0];
-      document.getElementById('latestEmpty').style.display = 'none';
-      document.getElementById('latestPanel').style.display = 'block';
-      document.getElementById('latestImg').src = latest.image_url + '?t=' + Date.now();
-      const d = latest.decision || {};
-      document.getElementById('mNutrient').textContent = d.nutrient_deficient || 'None';
-      document.getElementById('mHealthy').textContent = d.is_healthy ? 'Yes' : 'No';
-      document.getElementById('mIssue').textContent = d.top_issue || '—';
-      document.getElementById('mSeverity').textContent = (d.severity_pct ?? '—') + '%';
-      document.getElementById('mDose').textContent = (d.dose_ms ?? 0) + ' ms';
-      document.getElementById('mPump').textContent = latest.pumped ? 'ON' : 'OFF';
-      document.getElementById('mTime').textContent = latest.stamp || '—';
-      document.getElementById('mReason').textContent = d.reason || '—';
-      const cands = d.nutrient_candidates || [];
-      document.getElementById('mNutrientList').textContent = cands.length
-        ? cands.map(c => `${c.nutrient} (${Math.round((c.probability || 0) * 100)}%)`).join(', ')
-        : 'None detected';
-
       document.getElementById('historyEmpty').style.display = 'none';
-      document.getElementById('historyTable').style.display = 'table';
+      document.getElementById('gallery').style.display = 'grid';
+      const current = items.find(i => i.image_name === selectedName) || items[0];
+      showItem(current);
+      renderGallery();
+
+      const analyzed = items.filter(i => i.analyzed);
+      const table = document.getElementById('historyTable');
       const body = document.getElementById('historyBody');
-      body.innerHTML = items.map(item => {
+      if (!analyzed.length) {
+        table.style.display = 'none';
+        return;
+      }
+      table.style.display = 'table';
+      body.innerHTML = analyzed.map(item => {
         const dd = item.decision || {};
         return `<tr>
           <td>${item.stamp || ''}</td>
@@ -240,6 +351,33 @@
       }).join('');
     }
 
+    document.getElementById('analyzeBtn').addEventListener('click', async () => {
+      if (!selectedName) return;
+      const btn = document.getElementById('analyzeBtn');
+      const msg = document.getElementById('analyzeMsg');
+      const item = items.find(i => i.image_name === selectedName);
+      btn.disabled = true;
+      msg.textContent = 'Analyzing with Plant.id...';
+      try {
+        const res = await fetch('/analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: selectedName,
+            image_url: item && item.image_url,
+          }),
+        });
+        const json = await res.json();
+        if (!res.ok || !json.ok) throw new Error(json.error || 'Analyze failed');
+        msg.textContent = 'Done. Values updated below.';
+        await refresh();
+      } catch (err) {
+        msg.textContent = 'Error: ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
     document.getElementById('uploadForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const file = document.getElementById('fileInput').files[0];
@@ -247,14 +385,15 @@
       const btn = document.getElementById('uploadBtn');
       const msg = document.getElementById('uploadMsg');
       btn.disabled = true;
-      msg.textContent = 'Analyzing with Plant.id...';
+      msg.textContent = 'Saving to Supabase...';
       try {
         const fd = new FormData();
         fd.append('image', file);
-        const res = await fetch('/ingest', { method: 'POST', body: fd });
+        const res = await fetch('/upload', { method: 'POST', body: fd });
         const json = await res.json();
-        if (!res.ok || !json.ok) throw new Error(json.error || 'Analyze failed');
-        msg.textContent = 'Done. Values updated below.';
+        if (!res.ok || !json.ok) throw new Error(json.error || 'Save failed');
+        selectedName = json.image_name;
+        msg.textContent = 'Saved. Select it on the right, then Analyze.';
         await refresh();
       } catch (err) {
         msg.textContent = 'Error: ' + err.message;

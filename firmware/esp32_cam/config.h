@@ -21,12 +21,12 @@ static const uint32_t CAPTURE_INTERVAL_MS = 60UL * 1000UL;  // 60s for API testi
 static const bool USE_DEEP_SLEEP = false;
 
 // Wi-Fi for Plant.id bridge upload (same network as laptop).
-static const char* WIFI_SSID = "PLDTHOMEFIBR5ABD";
+static const char* WIFI_SSID = "PLDTHOMEFIBRB5ABD";
 static const char* WIFI_PASSWORD = "PLDTWIFI98EMC";
 
-// Laptop running: python -m plantid.server
-// Example: "http://192.168.1.20:8080/ingest"
-#define PLANTID_INGEST_URL "https://hydroponics-gmmj.onrender.com/ingest"
+// Website / Render bridge: POST JPEG here (saved to Supabase, analyzed later).
+// Example local: "http://192.168.1.3:8080/upload"
+static const char* PLANTID_INGEST_URL = "https://hydroponics-gmmj.onrender.com/upload";
 
 // Camera model: AI Thinker ESP32-CAM
 #define CAMERA_MODEL_AI_THINKER

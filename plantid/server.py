@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-HTTP ingest server for ESP32-CAM → Plant.id → ESP32 pump.
+HTTP ingest server for ESP32-CAM → Supabase → website picker → Plant.id.
 
-Also serves a simple local dashboard:
-  http://127.0.0.1:8080/
+ESP32-CAM POSTs JPEG to /upload (or /ingest). Photos are stored in
+Supabase (and local disk). The dashboard lists them so you choose which
+one to analyze via POST /analyze.
 """
 
 from __future__ import annotations
@@ -23,29 +24,13 @@ from flask import Flask, jsonify, request, render_template, send_from_directory
 from .client import PlantIdClient, PlantIdError
 from .decision import classify_nutrient, decide_dose
 from .esp_trigger import trigger_pump
-<<<<<<< Updated upstream
 from . import supabase_storage
-=======
-from .supabase_sync import is_configured as supabase_configured
-from .supabase_sync import get_client as supabase_client
-from .supabase_sync import sync_capture
->>>>>>> Stashed changes
 
 load_dotenv()
 
 app = Flask(__name__)
 
-# When true, photos + results are pushed to Supabase Storage/table in addition
-# to (or instead of) local disk. Set SUPABASE_ENABLED=0 to disable entirely.
 SUPABASE_ENABLED = os.getenv("SUPABASE_ENABLED", "1").strip() not in ("0", "false", "False")
-
-
-@app.after_request
-def _cors(resp):
-    resp.headers["Access-Control-Allow-Origin"] = "*"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Device"
-    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    return resp
 
 OUT_DIR = Path(__file__).resolve().parent / "output" / "cam_uploads"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -56,6 +41,25 @@ DOSE_MAX = int(os.getenv("DOSE_MS_MAX", "12000"))
 SEVERITY_MIN = int(os.getenv("DOSE_SEVERITY_MIN", "35"))
 CAM_STILL_URL = os.getenv("ESP32_CAM_STILL_URL", "").strip()
 CAM_PULL_INTERVAL_S = float(os.getenv("ESP32_CAM_PULL_INTERVAL_S", "10"))
+
+
+@app.after_request
+def _cors(resp):
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Device"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return resp
+
+
+def _device_name() -> str:
+    return (request.headers.get("X-Device") or "esp32-cam").strip() or "esp32-cam"
+
+
+def _stamp_from_name(filename: str) -> str:
+    name = Path(filename).stem
+    if name.startswith("cam_"):
+        return name[4:]
+    return name
 
 
 def _enrich_decision(decision: dict) -> dict:
@@ -105,24 +109,82 @@ def _enrich_decision(decision: dict) -> dict:
     return decision
 
 
-def _load_results(limit: int = 20) -> list[dict]:
-    items: list[dict] = []
-    for path in sorted(OUT_DIR.glob("cam_*_result.json"), reverse=True):
+def _item_from_local(jpg_path: Path) -> dict:
+    stamp = _stamp_from_name(jpg_path.name)
+    item = {
+        "id": None,
+        "stamp": stamp,
+        "image_name": jpg_path.name,
+        "image_url": f"/uploads/{jpg_path.name}",
+        "analyzed": False,
+        "pumped": False,
+        "decision": {},
+        "bytes": jpg_path.stat().st_size,
+        "created_at": datetime.fromtimestamp(jpg_path.stat().st_mtime).isoformat(),
+    }
+    result_path = OUT_DIR / f"cam_{stamp}_result.json"
+    if result_path.exists():
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(result_path.read_text(encoding="utf-8"))
         except Exception:
-            continue
-        stamp = path.name.replace("cam_", "").replace("_result.json", "")
-        image_name = f"cam_{stamp}.jpg"
-        data["stamp"] = stamp
-        data["image_name"] = image_name
-        data["image_url"] = f"/uploads/{image_name}"
-        data["pumped"] = bool(data.get("pumped"))
-        data["decision"] = _enrich_decision(data.get("decision") or {})
-        items.append(data)
-        if len(items) >= limit:
-            break
-    return items
+            data = {}
+        item["analyzed"] = True
+        item["pumped"] = bool(data.get("pumped"))
+        item["decision"] = _enrich_decision(data.get("decision") or {})
+        item["plant_id_access_token"] = data.get("plant_id_access_token")
+    return item
+
+
+def _item_from_row(row: dict) -> dict:
+    filename = row.get("filename") or row.get("storage_path") or ""
+    decision = _enrich_decision(row.get("decision") or {})
+    analyzed = bool(decision)
+    return {
+        "id": row.get("id"),
+        "stamp": _stamp_from_name(filename),
+        "image_name": filename,
+        "image_url": row.get("image_url") or f"/uploads/{filename}",
+        "analyzed": analyzed,
+        "pumped": bool(row.get("pumped")),
+        "decision": decision,
+        "bytes": row.get("bytes"),
+        "created_at": row.get("created_at"),
+        "device": row.get("device") or "esp32-cam",
+    }
+
+
+def _load_results(limit: int = 40) -> list[dict]:
+    by_name: dict[str, dict] = {}
+    for path in sorted(OUT_DIR.glob("cam_*.jpg"), reverse=True):
+        by_name[path.name] = _item_from_local(path)
+
+    if SUPABASE_ENABLED and supabase_storage.is_configured():
+        try:
+            for row in supabase_storage.fetch_latest(max(limit, 40)):
+                filename = row.get("filename") or ""
+                if not filename:
+                    continue
+                remote = _item_from_row(row)
+                local = by_name.get(filename)
+                if local:
+                    if remote.get("image_url") and str(remote["image_url"]).startswith("http"):
+                        local["image_url"] = remote["image_url"]
+                    if remote.get("analyzed"):
+                        local["analyzed"] = True
+                        local["decision"] = remote["decision"]
+                        local["pumped"] = remote["pumped"]
+                    local["id"] = remote.get("id") or local.get("id")
+                else:
+                    by_name[filename] = remote
+        except Exception as exc:
+            print(f"[SUPABASE] list failed: {exc}")
+
+    items = sorted(
+        by_name.values(),
+        key=lambda x: x.get("created_at") or x.get("stamp") or "",
+        reverse=True,
+    )
+    return items[:limit]
 
 
 @app.get("/")
@@ -132,7 +194,7 @@ def dashboard():
 
 @app.get("/api/latest")
 def api_latest():
-    return jsonify({"ok": True, "items": _load_results(20)})
+    return jsonify({"ok": True, "items": _load_results(40)})
 
 
 @app.get("/uploads/<path:filename>")
@@ -149,7 +211,7 @@ def health():
             "auto_trigger": AUTO_TRIGGER,
             "esp_url": os.getenv("ESP32_CONTROLLER_URL", ""),
             "cam_still_url": CAM_STILL_URL,
-            "supabase": supabase_configured(),
+            "supabase": supabase_storage.is_configured(),
             "dashboard": "/",
         }
     )
@@ -174,7 +236,6 @@ def _save_jpeg(image_bytes: bytes) -> Path:
         image_path = OUT_DIR / f"cam_{stamp}_{n}.jpg"
         n += 1
     image_path.write_bytes(image_bytes)
-    sync_capture(image_path, image_bytes)
     return image_path
 
 
@@ -182,22 +243,25 @@ def _upload_to_supabase(
     image_path: Path,
     image_bytes: bytes,
     *,
+    device: str = "esp32-cam",
     decision: dict | None = None,
     pumped: bool | None = None,
+    plant_id_access_token: str | None = None,
 ) -> str | None:
-    """
-    Push the photo (and optional decision/pumped info) to Supabase.
-    Returns the public URL on success, or None if Supabase is disabled
-    or upload fails (failure is logged, never raised — local save already
-    succeeded so a Supabase hiccup shouldn't break the ESP32's request).
-    """
-    if not SUPABASE_ENABLED:
+    if not SUPABASE_ENABLED or not supabase_storage.is_configured():
         return None
     try:
         public_url = supabase_storage.upload_photo(image_path.name, image_bytes)
-        supabase_storage.insert_photo_record(
-            image_path.name, public_url, decision=decision, pumped=pumped
+        supabase_storage.upsert_capture(
+            image_path.name,
+            public_url,
+            device=device,
+            bytes_len=len(image_bytes),
+            decision=decision,
+            pumped=pumped,
+            plant_id_access_token=plant_id_access_token,
         )
+        print(f"[SUPABASE] stored {image_path.name}")
         return public_url
     except supabase_storage.SupabaseNotConfigured as exc:
         print(f"[SUPABASE] not configured, skipping upload: {exc}")
@@ -206,62 +270,43 @@ def _upload_to_supabase(
     return None
 
 
-@app.route("/upload", methods=["POST", "OPTIONS"])
-def upload():
-    """Save JPEG only (no Plant.id, no pump). Used by the still-test sketch."""
-    if request.method == "OPTIONS":
-        return ("", 204)
-
-    image_bytes = _read_image_bytes()
-    if not image_bytes or len(image_bytes) < 100:
-        return jsonify({"ok": False, "error": "empty/invalid image"}), 400
-
+def _store_photo(image_bytes: bytes, device: str = "esp32-cam") -> tuple[Path, str | None]:
     image_path = _save_jpeg(image_bytes)
-    print(f"[UPLOAD] saved {image_path.name} ({len(image_bytes)} bytes)")
-
-    public_url = _upload_to_supabase(image_path, image_bytes)
-
-    return jsonify(
-        {
-            "ok": True,
-            "saved": str(image_path),
-            "bytes": len(image_bytes),
-            "supabase_url": public_url,
-        }
-    )
+    public_url = _upload_to_supabase(image_path, image_bytes, device=device)
+    return image_path, public_url
 
 
-@app.post("/ingest")
-def ingest():
-    """
-    Accept raw JPEG body or multipart file field named 'image' / 'file'.
-    """
-    image_bytes = _read_image_bytes()
+def _ensure_local_jpeg(filename: str, image_url: str | None = None) -> Path:
+    safe = Path(filename).name
+    if not safe or safe != filename or ".." in filename:
+        raise ValueError("invalid filename")
+    path = OUT_DIR / safe
+    if path.exists() and path.stat().st_size >= 100:
+        return path
+    if image_url and str(image_url).startswith("http"):
+        urllib.request.urlretrieve(image_url, path)
+        if path.exists() and path.stat().st_size >= 100:
+            return path
+    raise FileNotFoundError(filename)
 
-    if not image_bytes or len(image_bytes) < 100:
-        return jsonify({"ok": False, "error": "empty/invalid image"}), 400
 
-    image_path = _save_jpeg(image_bytes)
-    stamp = image_path.stem.replace("cam_", "", 1)
-
-    try:
-        client = PlantIdClient()
-        health_json = client.health_assessment(image_path)
-    except PlantIdError as exc:
-        return jsonify({"ok": False, "error": str(exc), "saved": str(image_path)}), 502
-
+def _run_plantid(image_path: Path) -> dict:
+    client = PlantIdClient()
+    health_json = client.health_assessment(image_path)
     decision = decide_dose(
         health_json,
         dose_ms_base=DOSE_BASE,
         dose_ms_max=DOSE_MAX,
         severity_min=SEVERITY_MIN,
     )
-
     result = {
         "ok": True,
         "saved": str(image_path),
+        "image_name": image_path.name,
+        "stamp": _stamp_from_name(image_path.name),
         "decision": decision.to_dict(),
         "plant_id_access_token": health_json.get("access_token"),
+        "analyzed": True,
     }
 
     if decision.should_dose and AUTO_TRIGGER:
@@ -284,26 +329,109 @@ def ingest():
             else "auto_trigger disabled"
         )
 
+    stamp = result["stamp"]
     (OUT_DIR / f"cam_{stamp}_result.json").write_text(
         json.dumps(result, indent=2), encoding="utf-8"
     )
-    sync_capture(image_path, image_bytes, result=result)
 
+    image_bytes = image_path.read_bytes()
     public_url = _upload_to_supabase(
         image_path,
         image_bytes,
+        device="esp32-cam",
         decision=decision.to_dict(),
         pumped=result["pumped"],
+        plant_id_access_token=result.get("plant_id_access_token"),
     )
     result["supabase_url"] = public_url
+    result["image_url"] = public_url or f"/uploads/{image_path.name}"
 
     print(
-        f"[INGEST] {image_path.name} -> healthy={decision.is_healthy} "
+        f"[ANALYZE] {image_path.name} -> healthy={decision.is_healthy} "
         f"nutrient={decision.nutrient_deficient} issue={decision.top_issue} "
         f"dose={decision.dose_ms}ms pumped={result['pumped']} "
         f"supabase={'ok' if public_url else 'skipped'}"
     )
-    return jsonify(result)
+    return result
+
+
+def _save_only_response(image_bytes: bytes):
+    if not image_bytes or len(image_bytes) < 100:
+        return jsonify({"ok": False, "error": "empty/invalid image"}), 400
+    image_path, public_url = _store_photo(image_bytes, _device_name())
+    print(f"[UPLOAD] saved {image_path.name} ({len(image_bytes)} bytes)")
+    return jsonify(
+        {
+            "ok": True,
+            "saved": str(image_path),
+            "image_name": image_path.name,
+            "stamp": _stamp_from_name(image_path.name),
+            "bytes": len(image_bytes),
+            "analyzed": False,
+            "supabase_url": public_url,
+            "image_url": public_url or f"/uploads/{image_path.name}",
+        }
+    )
+
+
+@app.route("/upload", methods=["POST", "OPTIONS"])
+def upload():
+    """Save JPEG to disk + Supabase. No Plant.id until /analyze."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    return _save_only_response(_read_image_bytes())
+
+
+@app.route("/ingest", methods=["POST", "OPTIONS"])
+def ingest():
+    """Same as /upload: store the still. Analysis is chosen on the website."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    return _save_only_response(_read_image_bytes())
+
+
+@app.route("/analyze", methods=["POST", "OPTIONS"])
+def analyze():
+    """Run Plant.id on a stored photo (or a newly uploaded file)."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+
+    if request.files:
+        image_bytes = _read_image_bytes()
+        if not image_bytes or len(image_bytes) < 100:
+            return jsonify({"ok": False, "error": "empty/invalid image"}), 400
+        image_path, _public_url = _store_photo(image_bytes, _device_name())
+        try:
+            return jsonify(_run_plantid(image_path))
+        except PlantIdError as exc:
+            return jsonify({"ok": False, "error": str(exc), "saved": str(image_path)}), 502
+
+    payload = request.get_json(silent=True) or {}
+    filename = (payload.get("filename") or payload.get("image_name") or "").strip()
+    image_url = (payload.get("image_url") or "").strip() or None
+
+    if not filename:
+        return jsonify({"ok": False, "error": "filename required"}), 400
+
+    if SUPABASE_ENABLED and supabase_storage.is_configured() and not image_url:
+        try:
+            row = supabase_storage.get_by_filename(filename)
+            if row:
+                image_url = row.get("image_url")
+        except Exception as exc:
+            print(f"[SUPABASE] lookup failed: {exc}")
+
+    try:
+        image_path = _ensure_local_jpeg(filename, image_url)
+    except (ValueError, FileNotFoundError) as exc:
+        return jsonify({"ok": False, "error": f"photo not found: {exc}"}), 404
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"could not load photo: {exc}"}), 502
+
+    try:
+        return jsonify(_run_plantid(image_path))
+    except PlantIdError as exc:
+        return jsonify({"ok": False, "error": str(exc), "saved": str(image_path)}), 502
 
 
 def _pull_cam_stills() -> None:
@@ -322,9 +450,12 @@ def _pull_cam_stills() -> None:
             if data and len(data) >= 100:
                 digest = hashlib.md5(data).hexdigest()
                 if digest != last_hash:
-                    path = _save_jpeg(data)
+                    path, public_url = _store_photo(data, "esp32-cam")
                     last_hash = digest
-                    print(f"[PULL] saved {path.name} ({len(data)} bytes)")
+                    print(
+                        f"[PULL] saved {path.name} ({len(data)} bytes) "
+                        f"supabase={'ok' if public_url else 'skipped'}"
+                    )
         except Exception as exc:
             print(f"[PULL] failed: {exc}")
         time.sleep(CAM_PULL_INTERVAL_S)
@@ -336,11 +467,13 @@ def main() -> None:
     print("=== Plant.id CAM bridge + dashboard ===")
     print(f"Dashboard: http://127.0.0.1:{port}/")
     print(f"Listening on http://{host}:{port}")
-    print("ESP32-CAM should POST JPEG to /ingest (Plant.id) or /upload (save only)")
+    print("ESP32-CAM should POST JPEG to /upload (save to Supabase). Analyze from the website.")
     print(f"Auto pump trigger: {AUTO_TRIGGER}")
     print(f"ESP32_CONTROLLER_URL={os.getenv('ESP32_CONTROLLER_URL', '')}")
-    if supabase_client():
-        print("Supabase: connected (captures -> Storage + public.captures)")
+    if supabase_storage.is_configured():
+        print("Supabase: connected (stills -> Storage + public.captures)")
+    else:
+        print("Supabase: not configured (photos stay on local disk until keys are set)")
     if CAM_STILL_URL:
         print(f"Pulling stills from {CAM_STILL_URL}")
         threading.Thread(target=_pull_cam_stills, daemon=True).start()

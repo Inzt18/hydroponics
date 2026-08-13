@@ -80,7 +80,15 @@ static bool connectWifi() {
     Serial.println("[WIFI] Set WIFI_SSID / WIFI_PASSWORD in config.h");
     return false;
   }
+  if (WiFi.status() == WL_CONNECTED) {
+    return true;
+  }
+
+  // Drop a leftover join so WiFi.begin() is not called while STA is connecting.
+  WiFi.disconnect(true);
+  delay(200);
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.printf("[WIFI] connecting to %s", WIFI_SSID);
   uint32_t start = millis();
@@ -91,6 +99,7 @@ static bool connectWifi() {
   Serial.println();
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[WIFI] failed");
+    WiFi.disconnect(true);
     return false;
   }
   Serial.print("[WIFI] OK IP=");
@@ -127,7 +136,7 @@ static bool uploadJpegToPlantIdBridge() {
     http.addHeader("X-Device", "esp32-cam");
     int code = http.POST(fb->buf, fb->len);
     String body = http.getString();
-    Serial.printf("[CAM] ingest HTTP %d\n", code);
+    Serial.printf("[CAM] upload HTTP %d\n", code);
     if (body.length() > 0) {
       Serial.println(body.substring(0, min((int)body.length(), 240)));
     }
@@ -181,8 +190,13 @@ static bool captureThumbnail(uint8_t* out_rgb, uint32_t* capture_ms) {
   return true;
 }
 
-static void onDataSent(const wifi_tx_info_t* tx_info, esp_now_send_status_t status) {
-  (void)tx_info;
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+static void onDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status) {
+  (void)info;
+#else
+static void onDataSent(const uint8_t* mac, esp_now_send_status_t status) {
+  (void)mac;
+#endif
   if (status != ESP_NOW_SEND_SUCCESS) {
     Serial.println("[CAM] ESP-NOW send fail");
   }

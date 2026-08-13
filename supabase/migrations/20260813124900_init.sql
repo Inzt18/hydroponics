@@ -38,9 +38,16 @@ insert into storage.buckets (id, name, public)
 values ('cam-uploads', 'cam-uploads', true)
 on conflict (id) do update set public = true;
 
-drop policy if exists "Public read cam uploads" on storage.objects;
-create policy "Public read cam uploads"
+drop policy if exists "Service role write cam uploads" on storage.objects;
+create policy "Service role write cam uploads"
   on storage.objects
-  for select
-  to public
+  for insert
+  to service_role
+  with check (bucket_id = 'cam-uploads');
+
+drop policy if exists "Service role update cam uploads" on storage.objects;
+create policy "Service role update cam uploads"
+  on storage.objects
+  for update
+  to service_role
   using (bucket_id = 'cam-uploads');
