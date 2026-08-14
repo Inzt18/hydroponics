@@ -217,7 +217,7 @@
   <header>
     <div>
       <h1>Smart Fertigation Monitor</h1>
-      <div class="sub">ESP32-CAM uploads to the server → Choose File to pick one → Analyze</div>
+      <div class="sub">Camera stills analyze automatically. You can also upload a photo from this device.</div>
     </div>
     <div class="pill"><span id="statusDot" class="dot"></span> <span id="statusText">Checking...</span></div>
   </header>
@@ -247,11 +247,13 @@
           <div class="metric span-2"><div class="label">Reason</div><div class="value" id="mReason">—</div></div>
         </div>
       </div>
-      <p class="muted" style="margin-top:14px">Choose File lists photos the ESP32-CAM already uploaded to this server:</p>
+      <p class="muted" style="margin-top:14px">Choose File uploads a photo from this phone or computer. Camera stills still appear in the gallery as they arrive.</p>
       <div class="file-row">
+        <input type="file" id="deviceFile" accept="image/*" hidden />
         <button type="button" class="choose" id="chooseBtn">Choose File</button>
+        <button type="button" class="choose" id="cameraBtn">Camera stills</button>
         <span class="chosen" id="chosenLabel">No file chosen</span>
-        <button type="button" id="analyzeBtn" disabled>Analyze photo</button>
+        <button type="button" id="analyzeBtn" disabled>Re-analyze</button>
       </div>
       <p class="muted" id="analyzeMsg"></p>
     </section>
@@ -304,8 +306,8 @@
       document.getElementById('mSeverity').textContent = '—';
       document.getElementById('mDose').textContent = '—';
       document.getElementById('mPump').textContent = '—';
-      document.getElementById('mNutrientList').textContent = 'Choose this photo, then click Analyze.';
-      document.getElementById('mReason').textContent = 'Stored in Supabase. Analysis runs only when you pick a picture.';
+      document.getElementById('mNutrientList').textContent = 'Waiting for Plant.id...';
+      document.getElementById('mReason').textContent = 'New camera photos are analyzed automatically. Results appear here when ready.';
     }
 
     function showItem(item) {
@@ -406,13 +408,13 @@
     document.getElementById('analyzeBtn').addEventListener('click', async () => {
       const msg = document.getElementById('analyzeMsg');
       if (!selectedName) {
-        msg.textContent = 'Click Choose File and pick an ESP32-CAM photo first.';
+        msg.textContent = 'Choose a photo first.';
         return;
       }
       const btn = document.getElementById('analyzeBtn');
       const item = items.find(i => i.image_name === selectedName);
       btn.disabled = true;
-      msg.textContent = 'Analyzing with Plant.id...';
+      msg.textContent = 'Re-analyzing with Plant.id...';
       try {
         const res = await fetch('/analyze', {
           method: 'POST',
@@ -469,7 +471,66 @@
       });
     }
 
-    document.getElementById('chooseBtn').addEventListener('click', async () => {
+    async function fileToJpeg(file) {
+      const name = (file.name || 'upload.jpg').toLowerCase();
+      if (file.type === 'image/jpeg' || name.endsWith('.jpg') || name.endsWith('.jpeg')) {
+        return file;
+      }
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      canvas.getContext('2d').drawImage(bitmap, 0, 0);
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not convert image'))), 'image/jpeg', 0.9);
+      });
+      return new File([blob], name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+    }
+
+    async function uploadDeviceFile(file) {
+      const msg = document.getElementById('analyzeMsg');
+      const btn = document.getElementById('chooseBtn');
+      btn.disabled = true;
+      document.getElementById('chosenLabel').textContent = file.name;
+      msg.textContent = 'Uploading ' + file.name + '...';
+      try {
+        const jpeg = await fileToJpeg(file);
+        const fd = new FormData();
+        fd.append('image', jpeg, jpeg.name || 'upload.jpg');
+        const res = await fetch('/upload', {
+          method: 'POST',
+          headers: { 'X-Device': 'manual-upload' },
+          body: fd,
+        });
+        const json = await res.json();
+        if (!res.ok || !json.ok) throw new Error(json.error || 'Upload failed');
+        selectedName = json.image_name;
+        msg.textContent = 'Uploaded. Analyzing automatically...';
+        document.getElementById('latestEmpty').style.display = 'none';
+        document.getElementById('latestPanel').style.display = 'block';
+        document.getElementById('latestImg').src = json.image_url;
+        document.getElementById('selectedName').textContent = json.image_name;
+        pendingMetrics();
+        await refresh();
+      } catch (err) {
+        msg.textContent = 'Upload error: ' + err.message;
+      } finally {
+        btn.disabled = false;
+        document.getElementById('deviceFile').value = '';
+      }
+    }
+
+    document.getElementById('chooseBtn').addEventListener('click', () => {
+      document.getElementById('deviceFile').click();
+    });
+
+    document.getElementById('deviceFile').addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      uploadDeviceFile(file);
+    });
+
+    document.getElementById('cameraBtn').addEventListener('click', async () => {
       const modal = document.getElementById('photoModal');
       const status = document.getElementById('photoModalStatus');
       modal.classList.add('open');

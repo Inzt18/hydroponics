@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-HTTP ingest server for ESP32-CAM → Supabase → website picker → Plant.id.
+HTTP ingest server for ESP32-CAM → Supabase → Plant.id.
 
-ESP32-CAM POSTs JPEG to /upload (or /ingest). Photos are stored in
-Supabase (and local disk). The dashboard lists them so you choose which
-one to analyze via POST /analyze.
+ESP32-CAM stills are stored, then analyzed automatically (Plant.id).
+The dashboard shows results as they arrive. POST /analyze still works
+for a manual re-run.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from . import supabase_storage
 load_dotenv()
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024
 
 SUPABASE_ENABLED = os.getenv("SUPABASE_ENABLED", "1").strip() not in ("0", "false", "False")
 
@@ -36,6 +37,7 @@ OUT_DIR = Path(__file__).resolve().parent / "output" / "cam_uploads"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 AUTO_TRIGGER = os.getenv("PLANTID_AUTO_TRIGGER", "1").strip() not in ("0", "false", "False")
+AUTO_ANALYZE = os.getenv("PLANTID_AUTO_ANALYZE", "1").strip() not in ("0", "false", "False")
 DOSE_BASE = int(os.getenv("DOSE_MS_BASE", "3000"))
 DOSE_MAX = int(os.getenv("DOSE_MS_MAX", "12000"))
 SEVERITY_MIN = int(os.getenv("DOSE_SEVERITY_MIN", "35"))
@@ -247,6 +249,7 @@ def health():
             "ok": True,
             "service": "plantid-cam-bridge",
             "auto_trigger": AUTO_TRIGGER,
+            "auto_analyze": AUTO_ANALYZE,
             "esp_url": os.getenv("ESP32_CONTROLLER_URL", ""),
             "cam_still_url": CAM_STILL_URL,
             "supabase": supabase_storage.is_configured(),
@@ -401,11 +404,28 @@ def _run_plantid(image_path: Path) -> dict:
     return result
 
 
+def _queue_auto_analyze(image_path: Path) -> None:
+    if not AUTO_ANALYZE:
+        return
+
+    def worker() -> None:
+        try:
+            print(f"[ANALYZE] auto starting {image_path.name}")
+            _run_plantid(image_path)
+        except Exception as exc:
+            print(f"[ANALYZE] auto failed {image_path.name}: {exc}")
+
+    threading.Thread(
+        target=worker, daemon=True, name=f"analyze-{image_path.name}"
+    ).start()
+
+
 def _save_only_response(image_bytes: bytes):
     if not image_bytes or len(image_bytes) < 100:
         return jsonify({"ok": False, "error": "empty/invalid image"}), 400
     image_path, public_url = _store_photo(image_bytes, _device_name())
     print(f"[UPLOAD] saved {image_path.name} ({len(image_bytes)} bytes)")
+    _queue_auto_analyze(image_path)
     return jsonify(
         {
             "ok": True,
@@ -414,6 +434,7 @@ def _save_only_response(image_bytes: bytes):
             "stamp": _stamp_from_name(image_path.name),
             "bytes": len(image_bytes),
             "analyzed": False,
+            "analyzing": AUTO_ANALYZE,
             "supabase_url": public_url,
             "image_url": public_url or f"/uploads/{image_path.name}",
         }
@@ -422,7 +443,7 @@ def _save_only_response(image_bytes: bytes):
 
 @app.route("/upload", methods=["POST", "OPTIONS"])
 def upload():
-    """Save JPEG to disk + Supabase. No Plant.id until /analyze."""
+    """Save JPEG to disk + Supabase, then auto-analyze."""
     if request.method == "OPTIONS":
         return ("", 204)
     return _save_only_response(_read_image_bytes())
@@ -430,7 +451,7 @@ def upload():
 
 @app.route("/ingest", methods=["POST", "OPTIONS"])
 def ingest():
-    """Same as /upload: store the still. Analysis is chosen on the website."""
+    """Same as /upload: store the still, then auto-analyze."""
     if request.method == "OPTIONS":
         return ("", 204)
     return _save_only_response(_read_image_bytes())
@@ -502,6 +523,7 @@ def _pull_cam_stills() -> None:
                         f"[PULL] saved {path.name} ({len(data)} bytes) "
                         f"supabase={'ok' if public_url else 'skipped'}"
                     )
+                    _queue_auto_analyze(path)
         except Exception as exc:
             print(f"[PULL] failed: {exc}")
         time.sleep(CAM_PULL_INTERVAL_S)
@@ -513,7 +535,8 @@ def main() -> None:
     print("=== Plant.id CAM bridge + dashboard ===")
     print(f"Dashboard: http://127.0.0.1:{port}/")
     print(f"Listening on http://{host}:{port}")
-    print("ESP32-CAM should POST JPEG to /upload (save to Supabase). Analyze from the website.")
+    print("ESP32-CAM stills are saved then auto-analyzed with Plant.id.")
+    print(f"Auto analyze: {AUTO_ANALYZE}")
     print(f"Auto pump trigger: {AUTO_TRIGGER}")
     print(f"ESP32_CONTROLLER_URL={os.getenv('ESP32_CONTROLLER_URL', '')}")
     if supabase_storage.is_configured():
