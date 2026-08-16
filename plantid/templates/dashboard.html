@@ -267,7 +267,6 @@
           <div class="metric"><div class="label">Plant.id issue</div><div class="value" id="mIssue">—</div></div>
           <div class="metric"><div class="label">Severity</div><div class="value" id="mSeverity">—</div></div>
           <div class="metric"><div class="label">Dose</div><div class="value" id="mDose">—</div></div>
-          <!-- <div class="metric"><div class="label">Pump</div><div class="value" id="mPump">—</div></div> -->
           <div class="metric"><div class="label">Time</div><div class="value" id="mTime">—</div></div>
           <div class="metric span-2"><div class="label">Other possible nutrients</div><div class="value" id="mNutrientList">—</div></div>
           <div class="metric span-2"><div class="label">Reason</div><div class="value" id="mReason">—</div></div>
@@ -298,7 +297,6 @@
               <th>Issue</th>
               <th>Severity</th>
               <th>Dose</th>
-              <th>Pump</th>
             </tr>
           </thead>
           <tbody id="historyBody"></tbody>
@@ -331,7 +329,6 @@
       document.getElementById('mIssue').textContent = '—';
       document.getElementById('mSeverity').textContent = '—';
       document.getElementById('mDose').textContent = '—';
-      document.getElementById('mPump').textContent = '—';
       document.getElementById('mNutrientList').textContent = 'Waiting for Plant.id...';
       document.getElementById('mReason').textContent = 'New camera photos are analyzed automatically. Results appear here when ready.';
     }
@@ -357,7 +354,6 @@
       document.getElementById('mIssue').textContent = d.top_issue || '—';
       document.getElementById('mSeverity').textContent = (d.severity_pct ?? '—') + '%';
       document.getElementById('mDose').textContent = (d.dose_ms ?? 0) + ' ms';
-      document.getElementById('mPump').textContent = item.pumped ? 'ON' : 'OFF';
       document.getElementById('mReason').textContent = d.reason || '—';
       const cands = d.nutrient_candidates || [];
       document.getElementById('mNutrientList').textContent = cands.length
@@ -426,7 +422,6 @@
           <td>${dd.top_issue || ''}</td>
           <td>${dd.severity_pct ?? ''}%</td>
           <td>${dd.dose_ms ?? 0} ms</td>
-          <td>${item.pumped ? 'ON' : 'OFF'}</td>
         </tr>`;
       }).join('');
     }
