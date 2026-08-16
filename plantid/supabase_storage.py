@@ -165,6 +165,42 @@ def _row_from_decision(
     return row
 
 
+def _rest_json(
+    method: str,
+    path: str,
+    payload: dict[str, Any] | None = None,
+    extra_headers: dict[str, str] | None = None,
+) -> Any:
+    url = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if not url or not key:
+        raise SupabaseNotConfigured(
+            "SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set in environment/.env"
+        )
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "apikey": key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
+    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    request = urllib.request.Request(
+        f"{url}{path}",
+        data=body,
+        method=method,
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        err_body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"rest HTTP {exc.code}: {err_body}") from exc
+    return json.loads(raw) if raw else None
+
+
 def upsert_capture(
     filename: str,
     public_url: str,
@@ -176,7 +212,6 @@ def upsert_capture(
     plant_id_access_token: str | None = None,
 ) -> dict[str, Any]:
     """Insert or update a captures row keyed by filename."""
-    client = get_client()
     row = _row_from_decision(
         filename,
         public_url,
@@ -187,8 +222,28 @@ def upsert_capture(
     )
     if plant_id_access_token:
         row["plant_id_access_token"] = plant_id_access_token
-    result = client.table(table_name()).upsert(row, on_conflict="filename").execute()
-    return result.data[0] if result.data else row
+    name = quote(table_name(), safe="")
+    try:
+        result = _rest_json(
+            "POST",
+            f"/rest/v1/{name}?on_conflict=filename",
+            row,
+            extra_headers={
+                "Prefer": "resolution=merge-duplicates,return=representation",
+            },
+        )
+        if isinstance(result, list) and result:
+            return result[0]
+        if isinstance(result, dict):
+            return result
+        return row
+    except Exception as rest_exc:
+        client = get_client()
+        try:
+            result = client.table(table_name()).upsert(row, on_conflict="filename").execute()
+            return result.data[0] if result.data else row
+        except Exception:
+            raise rest_exc from None
 
 
 def insert_photo_record(

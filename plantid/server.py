@@ -173,6 +173,7 @@ def _load_results(limit: int = 40) -> list[dict]:
                 if local:
                     if remote.get("image_url") and str(remote["image_url"]).startswith("http"):
                         local["image_url"] = remote["image_url"]
+                        local["source"] = "supabase"
                     if remote.get("analyzed"):
                         local["analyzed"] = True
                         local["decision"] = remote["decision"]
@@ -187,20 +188,26 @@ def _load_results(limit: int = 40) -> list[dict]:
                 filename = obj.get("filename") or ""
                 if not filename:
                     continue
-                if filename not in by_name:
-                    by_name[filename] = {
-                        "id": None,
-                        "stamp": _stamp_from_name(filename),
-                        "image_name": filename,
-                        "image_url": obj.get("image_url"),
-                        "analyzed": False,
-                        "pumped": False,
-                        "decision": {},
-                        "bytes": obj.get("bytes"),
-                        "created_at": obj.get("created_at"),
-                        "device": "esp32-cam",
-                        "source": "supabase",
-                    }
+                storage_url = obj.get("image_url")
+                existing = by_name.get(filename)
+                if existing:
+                    if storage_url and str(storage_url).startswith("http"):
+                        existing["image_url"] = storage_url
+                        existing["source"] = "supabase"
+                    continue
+                by_name[filename] = {
+                    "id": None,
+                    "stamp": _stamp_from_name(filename),
+                    "image_name": filename,
+                    "image_url": storage_url,
+                    "analyzed": False,
+                    "pumped": False,
+                    "decision": {},
+                    "bytes": obj.get("bytes"),
+                    "created_at": obj.get("created_at"),
+                    "device": "esp32-cam",
+                    "source": "supabase",
+                }
         except Exception as exc:
             print(f"[SUPABASE] storage list failed: {exc}")
 
