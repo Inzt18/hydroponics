@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from typing import Any
@@ -25,6 +26,7 @@ from supabase import Client, create_client
 
 _client: Client | None = None
 _warned = False
+_PGRST204_COLUMN = re.compile(r"Could not find the '([^']+)' column")
 
 
 def _jwt_claim(token: str, claim: str) -> str | None:
@@ -223,27 +225,36 @@ def upsert_capture(
     if plant_id_access_token:
         row["plant_id_access_token"] = plant_id_access_token
     name = quote(table_name(), safe="")
-    try:
-        result = _rest_json(
-            "POST",
-            f"/rest/v1/{name}?on_conflict=filename",
-            row,
-            extra_headers={
-                "Prefer": "resolution=merge-duplicates,return=representation",
-            },
-        )
-        if isinstance(result, list) and result:
-            return result[0]
-        if isinstance(result, dict):
-            return result
-        return row
-    except Exception as rest_exc:
-        client = get_client()
+    payload = dict(row)
+    last_exc: Exception | None = None
+    for _ in range(16):
         try:
-            result = client.table(table_name()).upsert(row, on_conflict="filename").execute()
-            return result.data[0] if result.data else row
-        except Exception:
-            raise rest_exc from None
+            result = _rest_json(
+                "POST",
+                f"/rest/v1/{name}?on_conflict=filename",
+                payload,
+                extra_headers={
+                    "Prefer": "resolution=merge-duplicates,return=representation",
+                },
+            )
+            if isinstance(result, list) and result:
+                return result[0]
+            if isinstance(result, dict):
+                return result
+            return payload
+        except Exception as rest_exc:
+            last_exc = rest_exc
+            match = _PGRST204_COLUMN.search(str(rest_exc))
+            if not match:
+                break
+            column = match.group(1)
+            if column not in payload:
+                break
+            print(f"[SUPABASE] omitting unknown column {column} on {table_name()}")
+            payload.pop(column, None)
+    if last_exc:
+        raise last_exc
+    return payload
 
 
 def insert_photo_record(
