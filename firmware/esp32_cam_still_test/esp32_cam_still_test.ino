@@ -17,8 +17,8 @@
 // ===========================
 // WiFi + laptop receiver
 // ===========================
-const char *ssid = "PLDTHOMEFIBRB5ABD";
-const char *password = "PLDTWIFI98EMC";
+const char *ssid = "ISABELLA";
+const char *password = "121311IA";
 
 // Laptop running: python -m plantid.server
 // Saves each JPEG to plantid/output/cam_uploads

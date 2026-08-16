@@ -108,6 +108,15 @@ static bool connectWifi() {
   return true;
 }
 
+static String urlOrigin(const char* url) {
+  String u = url;
+  int slash = u.indexOf('/', 8);  // skip https://
+  if (slash < 0) {
+    return u;
+  }
+  return u.substring(0, slash);
+}
+
 static bool uploadJpegToPlantIdBridge() {
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) {
@@ -120,58 +129,92 @@ static bool uploadJpegToPlantIdBridge() {
     return false;
   }
 
-  Serial.printf("[CAM] JPEG %u bytes → %s\n", fb->len, PLANTID_INGEST_URL);
-
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[CAM] WiFi not connected");
+  const size_t jpeg_len = fb->len;
+  uint8_t* jpeg = (uint8_t*)ps_malloc(jpeg_len);
+  if (!jpeg) {
+    jpeg = (uint8_t*)malloc(jpeg_len);
+  }
+  if (!jpeg) {
+    Serial.println("[CAM] JPEG copy alloc failed");
     esp_camera_fb_return(fb);
     return false;
   }
+  memcpy(jpeg, fb->buf, jpeg_len);
+  esp_camera_fb_return(fb);
 
-  // HTTP -11 = read timeout (dead host or Render cold start).
+  Serial.printf("[CAM] JPEG %u bytes -> %s  heap=%u\n",
+                (unsigned)jpeg_len, PLANTID_INGEST_URL, ESP.getFreeHeap());
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[CAM] WiFi not connected");
+    free(jpeg);
+    return false;
+  }
+
+  const bool https = String(PLANTID_INGEST_URL).startsWith("https://");
+  const String origin = urlOrigin(PLANTID_INGEST_URL);
   const int maxAttempts = 3;
   bool ok = false;
-  const bool https = String(PLANTID_INGEST_URL).startsWith("https://");
 
   for (int attempt = 1; attempt <= maxAttempts && !ok; attempt++) {
-    HTTPClient http;
-    http.setTimeout(45000);
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    if (https && attempt == 1 && origin.length() > 0) {
+      WiFiClientSecure wakeClient;
+      HTTPClient wakeHttp;
+      wakeClient.setInsecure();
+      wakeClient.setTimeout(60);
+      wakeHttp.setTimeout(60000);
+      String health = origin + "/health";
+      if (wakeHttp.begin(wakeClient, health)) {
+        int wake = wakeHttp.GET();
+        Serial.printf("[CAM] wake %s HTTP %d\n", health.c_str(), wake);
+        wakeHttp.end();
+        if (wake < 0) {
+          delay(8000);
+        }
+      }
+    }
 
     WiFiClientSecure secure;
+    HTTPClient http;
+    http.setTimeout(60000);
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.useHTTP10(true);
+
     bool began = false;
     if (https) {
       secure.setInsecure();
-      secure.setTimeout(45);
+      secure.setTimeout(60);
       began = http.begin(secure, PLANTID_INGEST_URL);
     } else {
       began = http.begin(PLANTID_INGEST_URL);
     }
 
     if (!began) {
-      Serial.printf("[CAM] http.begin failed (try %d/%d)\n", attempt, maxAttempts);
+      Serial.printf("[CAM] http.begin failed (try %d/%d) heap=%u\n",
+                    attempt, maxAttempts, ESP.getFreeHeap());
     } else {
       http.addHeader("Content-Type", "image/jpeg");
       http.addHeader("X-Device", "esp32-cam");
-      int code = http.POST(fb->buf, fb->len);
+      int code = http.POST(jpeg, jpeg_len);
       String body = http.getString();
-      Serial.printf("[CAM] upload HTTP %d (try %d/%d)\n", code, attempt, maxAttempts);
+      Serial.printf("[CAM] upload HTTP %d (try %d/%d) %s heap=%u\n",
+                    code, attempt, maxAttempts,
+                    (code < 0) ? http.errorToString(code).c_str() : "",
+                    ESP.getFreeHeap());
       if (body.length() > 0) {
         Serial.println(body.substring(0, min((int)body.length(), 240)));
       }
       ok = (code >= 200 && code < 300);
       http.end();
-      if (code == -11) {
-        Serial.println("[CAM] HTTP -11 timeout — server asleep or wrong URL");
-      }
     }
 
     if (!ok && attempt < maxAttempts) {
-      delay(4000);
+      Serial.println("[CAM] retry after Render wake / TLS fail");
+      delay(10000);
     }
   }
 
-  esp_camera_fb_return(fb);
+  free(jpeg);
   return ok;
 }
 

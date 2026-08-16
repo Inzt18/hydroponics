@@ -25,6 +25,7 @@ from .client import PlantIdClient, PlantIdError
 from .decision import classify_nutrient, decide_dose
 from .esp_trigger import trigger_pump
 from . import supabase_storage
+from . import weather
 
 load_dotenv()
 
@@ -227,6 +228,15 @@ def dashboard():
 @app.get("/api/latest")
 def api_latest():
     return jsonify({"ok": True, "items": _load_results(40)})
+
+
+@app.get("/api/weather")
+def api_weather():
+    try:
+        return jsonify(weather.fetch_weather())
+    except Exception as exc:
+        print(f"[WEATHER] fetch failed: {exc}")
+        return jsonify({"ok": False, "error": "weather unavailable"}), 502
 
 
 @app.get("/api/photos")

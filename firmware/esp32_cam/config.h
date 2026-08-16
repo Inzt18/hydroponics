@@ -21,8 +21,8 @@ static const uint32_t CAPTURE_INTERVAL_MS = 60UL * 1000UL;  // 60s for API testi
 static const bool USE_DEEP_SLEEP = false;
 
 // Wi-Fi for Plant.id bridge upload (same network as laptop).
-static const char* WIFI_SSID = "PLDTHOMEFIBRB5ABD";
-static const char* WIFI_PASSWORD = "PLDTWIFI98EMC";
+static const char* WIFI_SSID = "ISABELLA";
+static const char* WIFI_PASSWORD = "121311IA";
 
 // Website / Render bridge: POST JPEG here (saved to Supabase, analyzed later).
 // Example local: "http://192.168.1.3:8080/upload"

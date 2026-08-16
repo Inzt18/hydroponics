@@ -57,6 +57,19 @@
       gap: 16px;
       grid-template-columns: 1.2fr 1fr;
     }
+    .weather {
+      grid-column: 1 / -1;
+    }
+    .weather-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 10px;
+    }
+    .weather .place {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin: -6px 0 12px;
+    }
     @media (max-width: 900px) {
       main { grid-template-columns: 1fr; }
     }
@@ -223,6 +236,19 @@
   </header>
 
   <main>
+    <section class="card weather">
+      <h2>Weather</h2>
+      <div class="place" id="weatherPlace">Loading…</div>
+      <div class="weather-row">
+        <div class="metric"><div class="label">Now</div><div class="value" id="wNow">—</div></div>
+        <div class="metric"><div class="label">Temperature</div><div class="value" id="wTemp">—</div></div>
+        <div class="metric"><div class="label">Humidity</div><div class="value" id="wHum">—</div></div>
+        <div class="metric"><div class="label">Wind</div><div class="value" id="wWind">—</div></div>
+        <div class="metric"><div class="label">Today</div><div class="value" id="wRange">—</div></div>
+        <div class="metric"><div class="label">Rain today</div><div class="value" id="wRain">—</div></div>
+      </div>
+    </section>
+
     <section class="card">
       <h2>Selected photo</h2>
       <div id="latestEmpty" class="empty">No camera photos yet. When the ESP32-CAM uploads, they appear on the right.</div>
@@ -552,8 +578,33 @@
       if (e.target.id === 'photoModal') closePhotoModal();
     });
 
+    async function refreshWeather() {
+      const place = document.getElementById('weatherPlace');
+      try {
+        const data = await fetch('/api/weather').then(r => r.json());
+        if (!data.ok) throw new Error(data.error || 'unavailable');
+        place.textContent = data.place || '';
+        document.getElementById('wNow').textContent = data.condition || '—';
+        document.getElementById('wTemp').textContent =
+          data.temperature_c == null ? '—' : `${Math.round(data.temperature_c)}°C`;
+        document.getElementById('wHum').textContent =
+          data.humidity_pct == null ? '—' : `${Math.round(data.humidity_pct)}%`;
+        document.getElementById('wWind').textContent =
+          data.wind_kmh == null ? '—' : `${Math.round(data.wind_kmh)} km/h`;
+        const hi = data.today_high_c == null ? '—' : `${Math.round(data.today_high_c)}°`;
+        const lo = data.today_low_c == null ? '—' : `${Math.round(data.today_low_c)}°`;
+        document.getElementById('wRange').textContent = `${lo} / ${hi}`;
+        document.getElementById('wRain').textContent =
+          data.today_rain_mm == null ? '—' : `${data.today_rain_mm} mm`;
+      } catch {
+        place.textContent = 'Weather unavailable';
+      }
+    }
+
     refresh();
+    refreshWeather();
     setInterval(refresh, 5000);
+    setInterval(refreshWeather, 10 * 60 * 1000);
   </script>
 </body>
 </html>
