@@ -55,6 +55,39 @@ def _describe(code: object) -> str:
         return "Unknown"
 
 
+def _hot_c() -> float:
+    return float(os.getenv("WEATHER_HOT_C", "35"))
+
+
+def _avg_hours() -> int:
+    try:
+        n = int(os.getenv("WEATHER_AVG_HOURS", "3"))
+    except ValueError:
+        n = 3
+    return max(1, min(n, 24))
+
+
+def _hourly_mean(raw: dict, hours: int) -> tuple[float | None, list[dict]]:
+    """Mean of the last `hours` elapsed hourly temperatures (skip future hours)."""
+    hourly = raw.get("hourly") or {}
+    times = hourly.get("time") or []
+    temps = hourly.get("temperature_2m") or []
+    current_time = str((raw.get("current") or {}).get("time") or "")
+    elapsed: list[tuple[str, float]] = []
+    for stamp, temp in zip(times, temps):
+        if temp is None:
+            continue
+        if current_time and str(stamp) > current_time:
+            continue
+        elapsed.append((str(stamp), float(temp)))
+    recent = elapsed[-hours:]
+    if not recent:
+        return None, []
+    mean = round(sum(t for _, t in recent) / len(recent), 1)
+    samples = [{"hour": stamp, "c": round(temp, 1)} for stamp, temp in recent]
+    return mean, samples
+
+
 def fetch_weather() -> dict:
     now = time.time()
     cached = _cache.get("payload")
@@ -66,6 +99,7 @@ def fetch_weather() -> dict:
             "latitude": _lat(),
             "longitude": _lon(),
             "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation",
+            "hourly": "temperature_2m",
             "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code",
             "timezone": os.getenv("WEATHER_TZ", "Asia/Manila"),
             "forecast_days": 1,
@@ -78,6 +112,10 @@ def fetch_weather() -> dict:
 
     current = raw.get("current") or {}
     daily = raw.get("daily") or {}
+    hours = _avg_hours()
+    hourly_avg_c, hourly_samples = _hourly_mean(raw, hours)
+    hot_c = _hot_c()
+    heat_warning = hourly_avg_c is not None and hourly_avg_c >= hot_c
     payload = {
         "ok": True,
         "place": _place(),
@@ -89,6 +127,11 @@ def fetch_weather() -> dict:
         "today_high_c": (daily.get("temperature_2m_max") or [None])[0],
         "today_low_c": (daily.get("temperature_2m_min") or [None])[0],
         "today_rain_mm": (daily.get("precipitation_sum") or [None])[0],
+        "hourly_avg_c": hourly_avg_c,
+        "hourly_samples": hourly_samples,
+        "hourly_avg_hours": len(hourly_samples),
+        "heat_warning": heat_warning,
+        "heat_warning_c": hot_c,
         "updated": current.get("time"),
     }
     _cache["at"] = now

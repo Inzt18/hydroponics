@@ -70,6 +70,18 @@
       font-size: 0.85rem;
       margin: -6px 0 12px;
     }
+    .heat-warning {
+      display: none;
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--warn);
+      background: #3a2a10;
+      color: #ffe7b3;
+      font-size: 0.92rem;
+      line-height: 1.4;
+    }
+    .heat-warning.show { display: block; }
     @media (max-width: 900px) {
       main { grid-template-columns: 1fr; }
     }
@@ -246,6 +258,10 @@
         <div class="metric"><div class="label">Wind</div><div class="value" id="wWind">—</div></div>
         <div class="metric"><div class="label">Today</div><div class="value" id="wRange">—</div></div>
         <div class="metric"><div class="label">Rain today</div><div class="value" id="wRain">—</div></div>
+        <div class="metric"><div class="label">Hourly average</div><div class="value" id="wAvg">—</div></div>
+      </div>
+      <div class="heat-warning" id="heatWarning" role="alert">
+        Check ESP-32 Cam if the temperature is too high, kindly unplug if it's too hot
       </div>
     </section>
 
@@ -591,8 +607,18 @@
         document.getElementById('wRange').textContent = `${lo} / ${hi}`;
         document.getElementById('wRain').textContent =
           data.today_rain_mm == null ? '—' : `${data.today_rain_mm} mm`;
+        const nHours = data.hourly_avg_hours || 0;
+        document.getElementById('wAvg').textContent =
+          data.hourly_avg_c == null
+            ? '—'
+            : `${data.hourly_avg_c}°C (${nHours}h)`;
+        document.getElementById('heatWarning').classList.toggle(
+          'show',
+          Boolean(data.heat_warning)
+        );
       } catch {
         place.textContent = 'Weather unavailable';
+        document.getElementById('heatWarning').classList.remove('show');
       }
     }
 
